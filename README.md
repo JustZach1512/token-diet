@@ -2,8 +2,8 @@
 
 Always-on token-efficiency skill for coding agents — **Claude Code, Codex, Cursor,
 Windsurf, Cline**. Trims tokens across the whole session (replies, docs, tests,
-code, context, tool use) without losing correctness. **Up to −81% output and −54%
-bill** on real Sonnet 5 runs.
+code, context, tool use) without losing correctness. **≈31% lower bill on average**
+(−17% to −54% by session type) and **−30% to −81% output** on real Sonnet 5 runs.
 
 *trim the fat, keep the muscle.*
 
@@ -67,11 +67,13 @@ output vs. unavoidable file-reading:
 
 | Session type | Output | Bill |
 |---|--:|--:|
-| Output-heavy (advice, planning, explanation) | **−81%** | **−54%** |
+| Output-heavy (advice, planning, explanation) | −81% | −54% |
 | Code change + tests (`nestjs/nest`, 1673 files) | −49% | −22% |
 | Read-heavy comprehension | −30% | −17% |
+| **Average** | **−53%** | **−31%** |
 
-Correctness held in every run. Method + full tables: [`bench/RESULTS.md`](bench/RESULTS.md);
+Average is unweighted across the three scenarios; the 54% is best-case, not
+typical. Correctness held in every run. Method + full tables: [`bench/RESULTS.md`](bench/RESULTS.md);
 reproduce with `ANTHROPIC_API_KEY=… node bench/bench.mjs`.
 
 ## How always-on works

@@ -11,7 +11,18 @@
 # always-on rule files. "print" just emits the directive to paste anywhere else.
 set -euo pipefail
 
-HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Resolve the dir holding the source files. Run via `curl | bash` they aren't on
+# disk, so fetch them from the repo (override host with TOKEN_DIET_RAW — a fork or
+# a pinned tag, e.g. .../token-diet/v1).
+RAW="${TOKEN_DIET_RAW:-https://raw.githubusercontent.com/Kulaxyz/token-diet/main}"
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]:-.}")" 2>/dev/null && pwd)" || HERE=""
+if [ -z "$HERE" ] || [ ! -f "$HERE/activation.md" ]; then   # piped/remote run
+  command -v curl >/dev/null || { echo "curl is required for remote install" >&2; exit 1; }
+  HERE="$(mktemp -d)"; trap 'rm -rf "$HERE"' EXIT
+  for f in activation.md activation-ultra.md SKILL.md; do
+    curl -fsSL "$RAW/$f" -o "$HERE/$f" || { echo "fetch failed: $RAW/$f" >&2; exit 1; }
+  done
+fi
 ACT="$HERE/activation.md"          # the always-on directive (with markers)
 SKILL="$HERE/SKILL.md"
 HARNESS="auto"; SCOPE="global"; MODE="install"; ULTRA=0

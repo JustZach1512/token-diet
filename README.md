@@ -10,12 +10,15 @@ code, context, tool use) without losing correctness. **≈31% lower bill on aver
 ## Install
 
 ```bash
-./install.sh              # auto-detect installed agents, turn it on
-./install.sh --ultra      # + telegraphic chat (caveman-style); artifacts stay precise
-./install.sh --uninstall  # remove
+# one-liner — auto-detects Claude Code, Codex, etc.:
+curl -fsSL https://raw.githubusercontent.com/Kulaxyz/token-diet/main/install.sh | bash
+
+# pass options through `bash -s --`, e.g. the telegraphic level:
+curl -fsSL https://raw.githubusercontent.com/Kulaxyz/token-diet/main/install.sh | bash -s -- --ultra
 ```
 
-Target one explicitly with `-a claude|codex|cursor|windsurf|cline|all|print`, or add
+Or clone and run `./install.sh` (`--ultra` telegraphic chat · `--uninstall` remove).
+Target one agent with `-a claude|codex|cursor|windsurf|cline|all|print`, or add
 `--project` to install into the current repo instead of globally. It runs
 always-on — no per-message command — but `/token-diet [on|lite|ultra|off]` also
 works on demand.

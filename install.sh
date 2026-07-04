@@ -65,7 +65,13 @@ install_claude() {
   mkdir -p "$root/skills/token-diet" "$root/token-diet" "$root/hooks"
   cp "$SKILL" "$root/skills/token-diet/SKILL.md"          # /token-diet + progressive disclosure
   cp "$ACT"   "$root/token-diet/activation.md"
-  printf '#!/usr/bin/env bash\ncat "%s/token-diet/activation.md"\n' "$root" > "$root/hooks/token-diet-sessionstart.sh"
+  # Emit the directive as SessionStart `additionalContext` JSON — this is injected
+  # into context on EVERY source (startup, resume, clear, compact). Plain stdout is
+  # only reliably added on resume, so a `cat` hook silently no-ops on new sessions.
+  cat > "$root/hooks/token-diet-sessionstart.sh" <<HOOK
+#!/usr/bin/env bash
+exec python3 -c 'import json,sys; print(json.dumps({"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":open(sys.argv[1]).read()}}))' "$root/token-diet/activation.md"
+HOOK
   chmod +x "$root/hooks/token-diet-sessionstart.sh"
   settings_hook "$root/settings.json" add "$root/hooks/token-diet-sessionstart.sh"
   echo "claude: installed (always-on via SessionStart hook + /token-diet skill)"

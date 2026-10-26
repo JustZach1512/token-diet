@@ -449,6 +449,52 @@ const S = {
     [57, 61, 64, 69, 73, 76].forEach((m, i) => pluck(m, t + 0.8 + i * 0.022, 0.25, null, { dur: 2.5 }));
     modal({ t: t + 0.8, f: 1760, peak: 0.08, parts: [[1, 1, 1.2], [2.76, 0.2, 0.4]] });
   },
+  stinger() { // golpe grave y disonante cuando un zombi llega a la casa
+    if (!A.ctx || !A.sfxOn) return; const t = now();
+    [28, 29, 35, 40].forEach((m, i) => pluck(m, t + i * 0.014, 0.26, null, { dur: 2.8, damp: 0.997, bright: 0.75, lp: 1500 }));
+    tn({ t, f: 64, f2: 36, dur: 1.4, peak: 0.42 });
+    nz({ t, type: 'lowpass', f: 280, f2: 70, dur: 1.3, peak: 0.25, a: 0.03 });
+  },
+  step(x) {
+    if (!ok('step', 0.12)) return; const t = now(), d = panNode(x, 2);
+    nz({ t, type: 'lowpass', f: 380, f2: 110, dur: 0.08, peak: 0.4, dest: d });
+    nz({ t: t + 0.012, f: 1900, q: 1.2, dur: 0.035, peak: 0.06, dest: d });
+  },
+  creak() { // bisagra: la fricción va a saltitos y cada saltito hace sonar la madera de la puerta
+    if (!A.ctx || !A.sfxOn) return;
+    const c = A.ctx, t = now(), sr = c.sampleRate, len = Math.floor(sr * 0.9);
+    const buf = c.createBuffer(1, len, sr), d = buf.getChannelData(0);
+    for (let pos = 0; pos < len;) {
+      const u = pos / len, env = Math.sin(u * Math.PI);
+      const rate = 26 + 64 * env * (0.75 + 0.35 * Math.sin(u * 19)) + rnd(-5, 5), amp = env * rnd(0.55, 1);
+      for (let k = 0; k < 70 && pos + k < len; k++) d[pos + k] += amp * (Math.random() * 2 - 1) * Math.exp(-k / 11);
+      pos += Math.max(24, Math.floor(sr / rate));
+    }
+    const s = c.createBufferSource(); s.buffer = buf;
+    for (const [f, q, g] of [[640, 8, 1], [1360, 11, 0.6], [2480, 13, 0.35]]) {
+      const bp = c.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = f; bp.Q.value = q;
+      const gg = c.createGain(); gg.gain.value = g * 2.4; s.connect(bp); bp.connect(gg); gg.connect(A.sfx);
+    }
+    s.start(t);
+  },
+  slam() { // portazo: golpe de madera y el marco que vibra
+    if (!A.ctx || !A.sfxOn) return; const t = now();
+    tn({ t, f: 96, f2: 40, dur: 0.38, peak: 0.85 });
+    nz({ t, type: 'lowpass', f: 950, f2: 140, dur: 0.26, peak: 0.7 });
+    modal({ t, f: 172, peak: 0.22, parts: [[1, 1, 0.2], [2.31, 0.5, 0.12], [3.93, 0.3, 0.07]] });
+    for (let i = 0; i < 5; i++) nz({ t: t + 0.04 + i * rnd(0.025, 0.05), type: 'highpass', f: 2600, dur: 0.014, peak: rnd(0.04, 0.09) });
+  },
+  munch() { // mordiscos al otro lado de la pared: llegan apagados
+    if (!A.ctx || !A.sfxOn) return;
+    const c = A.ctx, t = now(), lp = c.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 850; lp.connect(A.sfx);
+    const g = c.createGain(); g.gain.value = 1.4; g.connect(lp);
+    for (let i = 0; i < 2; i++) {
+      const tt = t + i * rnd(0.12, 0.16), k = rnd(0.85, 1.15);
+      nz({ t: tt, f: 1500 * k, q: 0.9, dur: 0.06, peak: 0.4, dest: g });
+      nz({ t: tt + 0.02, f: 420 * k, q: 2.5, dur: 0.13, peak: 0.36, dest: g });
+      tn({ t: tt, f: 165 * k, f2: 62, dur: 0.07, peak: 0.26, dest: g });
+    }
+  },
   lose() {
     if (!A.ctx || !A.sfxOn) return; const t = now();
     [64, 62, 60, 59, 57, 56].forEach((m, i) => pluck(m, t + i * 0.2, 0.28, null, { dur: 1.2, damp: 0.993 }));
@@ -500,6 +546,7 @@ function musicTick() {
 }
 function setSfx(v) { A.sfxOn = v; if (A.sfx) A.sfx.gain.value = v ? 1 : 0; save(); syncToggles(); }
 function setMus(v) { A.musOn = v; if (A.mus) A.mus.gain.value = v ? 0.5 : 0; save(); syncToggles(); }
+function musicDuck(on) { if (A.ctx && A.mus) A.mus.gain.setTargetAtTime(on || !A.musOn ? 0 : 0.5, now(), 0.15); }
 
 /* ================================================================
    DATOS DEL JUEGO
@@ -571,11 +618,11 @@ function startLevel(li) {
     cards: plantsFor(li).map(type => ({ type, cd: 0 })),
     sel: null, shovel: false, drag: null, hover: null,
     wave: 0, waveT: 0, waveGap: 22, nextWave: 26, waveHp: 1, pending: [], delayed: -1,
-    skySun: 5, banner: null, shake: 0, final: false, ended: false, endT: 0, lastRow: -1, sunBumpAt: -9, nopeAt: -9,
+    skySun: 5, banner: null, shake: 0, final: false, ended: false, endT: 0, lastRow: -1, sunBumpAt: -9, nopeAt: -9, lost: false, lz: null,
   });
   // carga inicial más rápida en las plantas baratas
   G.cards.forEach(c => { if (['petacereza', 'papamina', 'nuez'].includes(c.type)) c.cd = PL[c.type].cd * 0.5; });
-  bgDirty = true;
+  bgDirty = true; musicDuck(false);
   $('menu').hidden = true; $('pause').hidden = true; $('result').hidden = true;
   banner('Nivel ' + (li + 1) + ': ' + L.name, 2.6, true);
   setTimeout(() => S.ready(), 150);
@@ -719,6 +766,7 @@ function spawnSun(x, y, ty, sky) {
 function collect(s) { if (s.got) return; s.got = true; S.sun(); }
 
 function update(dt) {
+  if (G.state === 'losing') { updateLose(dt); return; }
   if (G.state !== 'play') return;
   G.t += dt;
   if (G.banner) { G.banner.t += dt; if (G.banner.t > G.banner.dur) G.banner = null; }
@@ -853,7 +901,7 @@ function update(dt) {
     if (z.x < LX + 8) {
       const m = G.mowers.find(m => m.row === z.row);
       if (m && !m.active && !m.used) { m.active = true; S.mower(m.x); }
-      else if (z.x < 18 && !G.ended) lose();
+      else if (z.x < 18 && !G.ended) lose(z);
     }
   }
   G.zombies = G.zombies.filter(z => !(z.eaten || (z.dead && z.dieT > 1.4)));
@@ -901,8 +949,54 @@ function win() {
   $('rNext').hidden = last;
   $('result').hidden = false;
 }
-function lose() {
-  G.ended = true; G.state = 'result'; S.lose();
+/* ---------------- Derrota: un zombi entra en la casa ---------------- */
+const DOOR_X = -118; // centro de la puerta, en la fachada que queda a la izquierda del césped
+function lose(z) {
+  G.ended = true; G.state = 'losing'; G.lost = true; G.loseT = 0; G.loseZ = z;
+  z.eating = null; z.flash = 0; z.jumpT = -1;
+  G.lz = { phase: 0, door: -1, step: 0, munch: 0, bubbles: [], t2: 0, t3: 0, t4: 0, t5: 0 };
+  G.sel = null; G.drag = null; G.shovel = false; G.banner = null;
+  musicDuck(true); S.stinger();
+}
+// Fases: 0 todo se congela · 1 camina hasta la puerta · 2 entra · 3 portazo · 4 ñam, ñam · 5 letrero final
+function updateLose(dt) {
+  const z = G.loseZ, L = G.lz;
+  G.loseT += dt; const t = G.loseT;
+  G.shake = Math.max(0, G.shake - dt);
+  for (const q of G.parts) { q.t += dt; q.vy += q.g * dt; q.x += q.vx * dt; q.y += q.vy * dt; if (q.vr) q.rot += q.vr * dt; }
+  G.parts = G.parts.filter(q => q.t < q.life);
+  if (L.phase === 0 && t > 0.55) L.phase = 1;
+  if (L.phase === 1) {
+    if (z.x > DOOR_X + 4) {
+      z.x = Math.max(DOOR_X + 4, z.x - 62 * dt); z.anim += dt * 1.7;
+      L.step -= dt; if (L.step <= 0) { L.step = 0.38; S.step(z.x); }
+    } else if (L.door >= 1) { L.phase = 2; L.t2 = t; }
+  }
+  if (L.door < 0 && ((z.x < DOOR_X + 70 && t > 1.3) || t > 2.4)) { L.door = 0; S.creak(); }
+  if (L.door >= 0 && L.door < 1 && L.phase < 3) L.door = Math.min(1, L.door + dt / 0.5);
+  if (L.phase === 2) {
+    z.enter = clamp((t - L.t2) / 0.6, 0, 1); z.x -= 10 * dt; z.anim += dt;
+    if (z.enter >= 1) { L.phase = 3; L.t3 = t; }
+  }
+  if (L.phase === 3) {
+    L.door = Math.max(0, 1 - (t - L.t3) / 0.16);
+    if (L.door === 0) { L.phase = 4; L.t4 = t; S.slam(); G.shake = 0.5; }
+  }
+  if (L.phase === 4) {
+    const u = t - L.t4;
+    if (L.munch < 3 && u > 0.3 + L.munch * 0.36) { L.bubbles.push({ t, i: L.munch }); L.munch++; S.munch(); G.shake = 0.25; }
+    if (u > 1.45) { L.phase = 5; L.t5 = t; S.lose(); }
+  }
+  if (L.phase === 5 && t - L.t5 > 1.8) finishLose();
+}
+function skipLose() { // tocar la pantalla adelanta la animación
+  const L = G.lz; if (!L || G.loseT < 0.8) return;
+  if (L.phase < 5) { L.phase = 5; L.t5 = G.loseT; L.door = 0; G.loseZ.enter = 1; S.lose(); }
+  else finishLose();
+}
+function finishLose() {
+  if (G.state !== 'losing') return;
+  G.state = 'result'; G.shake = 0;
   $('rTitle').textContent = '¡Los zombis entraron en tu casa!';
   $('rTitle').className = 'bad';
   $('rText').textContent = 'Prueba a plantar más girasoles al principio para tener soles de sobra.';
@@ -1619,7 +1713,7 @@ function zBurnt(c, z) {
 }
 function drawZombie(z) { drawZombieOn(ctx, z, z.x, gy(z.row)); }
 function drawZombieOn(c, z, x, y) {
-  const giant = z.d.giant, s = giant ? 1.7 : 1, P = zpal(z);
+  const giant = z.d.giant, ent = z.enter || 0, s = (giant ? 1.7 : 1) * (1 - ent * (giant ? 0.45 : 0.25)), P = zpal(z);
   c.save();
   let alpha = 1;
   if (z.dead) {
@@ -1627,8 +1721,8 @@ function drawZombieOn(c, z, x, y) {
     else if (z.burnt) alpha = clamp(1.6 - z.dieT, 0, 1);
     else { const k = Math.min(1, z.dieT / 0.7); c.translate(x + 20 * s, y); c.rotate(k * k * 1.45); c.translate(-x - 20 * s, -y); alpha = clamp(1.6 - z.dieT, 0, 1); }
   }
-  c.globalAlpha *= alpha;
-  c.translate(x, y); c.scale(s, s);
+  c.globalAlpha *= alpha * (1 - clamp((ent - 0.55) / 0.45, 0, 1)); // al entrar se aleja hacia el fondo de la casa
+  c.translate(x, y - ent * 6); c.scale(s, s);
   const jumpH = z.jumpT >= 0 ? Math.sin(z.jumpT / 0.85 * Math.PI) * 80 : 0;
   shadowAt(c, 0, -1, 30 - jumpH * 0.12, 8, 0.34);
   c.translate(0, -jumpH);
@@ -1785,14 +1879,153 @@ function drawBanner() {
   c.restore(); c.textBaseline = 'alphabetic';
 }
 
+/* --- Derrota: la cámara se va hasta la casa --- */
+const easeInOut = u => u < 0.5 ? 2 * u * u : 1 - (2 - 2 * u) * (2 - 2 * u) / 2;
+function loseCam() {
+  const k = easeInOut(clamp((G.loseT - 0.3) / 1.3, 0, 1)), zoom = 1 + 0.15 * k, vh = H / zoom;
+  const ty = clamp(gy(G.loseZ.row) - 45, vh / 2, H - vh / 2);
+  let x = W / 2 + (90 - W / 2) * k, y = H / 2 + (ty - H / 2) * k;
+  if (G.shake > 0) { x += rnd(-1, 1) * G.shake * 10; y += rnd(-1, 1) * G.shake * 7; }
+  return { x, y, z: zoom };
+}
+function houseWindow(c, x, y, lit, ghost) {
+  rr(c, x - 46, y - 40, 92, 80, 5); c.fillStyle = '#fbf6ea'; c.fill(); ink(c, '#8a7a5c', 2);
+  c.fillStyle = lit ? vgrad(c, y - 32, y + 32, '#ffeeb4', '#f2a944') : vgrad(c, y - 32, y + 32, '#d5ecf8', '#7fb3d3');
+  c.fillRect(x - 38, y - 32, 76, 64);
+  if (ghost != null) { // la sombra del zombi se mueve dentro de la casa
+    c.save(); c.beginPath(); c.rect(x - 38, y - 32, 76, 64); c.clip();
+    ell(c, x + ghost, y + 30, 28, 16, 'rgba(45,28,14,.8)'); circ(c, x + ghost - 2, y + 2, 14, 'rgba(45,28,14,.8)');
+    c.beginPath(); c.moveTo(x + ghost - 12, y + 16); c.lineTo(x + ghost - 40, y + 10); ink(c, 'rgba(45,28,14,.8)', 7);
+    c.restore();
+  }
+  c.fillStyle = '#c4544c';
+  c.beginPath(); c.moveTo(x - 38, y - 32); c.lineTo(x - 20, y - 32); c.quadraticCurveTo(x - 27, y, x - 34, y + 32); c.lineTo(x - 38, y + 32); c.closePath(); c.fill();
+  c.beginPath(); c.moveTo(x + 38, y - 32); c.lineTo(x + 20, y - 32); c.quadraticCurveTo(x + 27, y, x + 34, y + 32); c.lineTo(x + 38, y + 32); c.closePath(); c.fill();
+  c.fillStyle = '#fbf6ea'; c.fillRect(x - 2.5, y - 32, 5, 64); c.fillRect(x - 38, y - 2.5, 76, 5);
+  if (!lit) { c.beginPath(); c.moveTo(x - 30, y + 24); c.lineTo(x - 10, y - 26); ink(c, 'rgba(255,255,255,.5)', 3); }
+  rr(c, x - 52, y + 38, 104, 8, 3); c.fillStyle = vgrad(c, y + 38, y + 46, '#ffffff', '#cbbd9f'); c.fill(); ink(c, '#8a7a5c', 1.5);
+  if (lit) {
+    const g = c.createRadialGradient(x, y, 20, x, y, 90); g.addColorStop(0, 'rgba(255,214,120,.28)'); g.addColorStop(1, 'rgba(255,214,120,0)');
+    c.fillStyle = g; c.fillRect(x - 90, y - 90, 180, 180);
+  }
+}
+function drawHouse(c) {
+  const z = G.loseZ, L = G.lz, li = G.li || 0, sky = SKIES[li] || SKIES[0], night = li === 9;
+  const fy = gy(z.row), dw = 70, dh = 120, dl = DOOR_X - dw / 2, top = fy + 2 - dh;
+  const munching = L.phase === 4, lit = (night || L.phase >= 4) && !(munching && Math.sin(G.loseT * 40) < -0.4);
+  // cielo y camino entre la casa y el césped
+  c.fillStyle = vgrad(c, 0, LY, sky[0], sky[1]); c.fillRect(-24, 0, 26, LY - 6);
+  c.fillStyle = vgrad(c, LY, H, '#b5a996', '#968a78'); c.fillRect(-24, LY - 6, 26, H - LY + 6);
+  for (const [x, y, r] of [[-20, LY - 7, 11], [-9, LY - 4, 12], [1, LY - 8, 10]]) circ(c, x, y, r, ball(c, x, y, r, '#69b84c', '#3d8a2e', '#225a1a'));
+  // fachada de tablas
+  c.fillStyle = vgrad(c, 0, H, '#f4e7cb', '#d6c39c'); c.fillRect(-460, 0, 438, H);
+  for (let y = 56; y < H; y += 17) { c.fillStyle = 'rgba(110,80,40,.2)'; c.fillRect(-460, y, 438, 2); c.fillStyle = 'rgba(255,255,255,.3)'; c.fillRect(-460, y + 2, 438, 1.5); }
+  c.fillStyle = hgrad(c, -36, -22, '#ffffff', '#cbbd9f'); c.fillRect(-36, 48, 14, H - 48);
+  c.fillStyle = 'rgba(0,0,0,.2)'; c.fillRect(-22, 48, 3, H - 48);
+  c.fillStyle = vgrad(c, H - 22, H, '#a99f8f', '#82786a'); c.fillRect(-460, H - 22, 424, 22);
+  // tejado de tejas y canalón
+  c.beginPath(); c.moveTo(-470, 0); c.lineTo(-16, 0); c.lineTo(-4, 42); c.lineTo(-470, 42); c.closePath();
+  c.fillStyle = vgrad(c, 0, 42, '#a24a38', '#6a2619'); c.fill(); ink(c, '#3d140c', 2.5);
+  for (let y = 11, k = 0; y < 40; y += 11, k++) {
+    c.beginPath(); for (let x = -470 + (k % 2) * 14; x < -18; x += 28) { c.moveTo(x, y); c.quadraticCurveTo(x + 14, y + 6, x + 28, y); }
+    ink(c, 'rgba(40,10,5,.35)', 1.5);
+  }
+  rr(c, -470, 40, 470, 9, 3); c.fillStyle = vgrad(c, 40, 49, '#d3d8dc', '#8e969c'); c.fill(); ink(c, '#5a6268', 1.5);
+  rr(c, -46, 46, 8, H - 60, 3); c.fillStyle = hgrad(c, -46, -38, '#d3d8dc', '#8e969c'); c.fill(); ink(c, '#5a6268', 1.2); // bajante
+  // puerta: marco, hueco y hoja que gira hacia dentro
+  rr(c, dl - 9, top - 10, dw + 18, dh + 10, 6); c.fillStyle = '#fbf6ea'; c.fill(); ink(c, '#8a7a5c', 2);
+  c.fillStyle = vgrad(c, top, fy, lit ? '#7a5530' : '#2c1d12', '#140c06'); c.fillRect(dl, top, dw, dh);
+  const pw = dw * (1 - Math.max(0, L.door) * 0.8);
+  c.fillStyle = hgrad(c, dl, dl + pw, '#a04a35', '#6c2c1e'); c.fillRect(dl, top, pw, dh);
+  c.strokeStyle = '#3d160c'; c.lineWidth = 2; c.strokeRect(dl, top, pw, dh);
+  if (pw > 14) {
+    rr(c, dl + pw * 0.16, top + 12, pw * 0.68, dh * 0.34, 3); ink(c, 'rgba(40,12,5,.55)', 2);
+    rr(c, dl + pw * 0.16, top + 20 + dh * 0.34, pw * 0.68, dh * 0.44, 3); ink(c, 'rgba(40,12,5,.55)', 2);
+    circ(c, dl + pw - 9, top + dh * 0.56, 3.8, ball(c, dl + pw - 9, top + dh * 0.56, 3.8, '#fff3b0', '#e0b13a', '#8a6410'), '#5a4010', 1);
+  }
+  // escalón, felpudo y farol
+  rr(c, dl - 16, fy - 1, dw + 32, 11, 3); c.fillStyle = vgrad(c, fy, fy + 10, '#d3c9b7', '#9e9381'); c.fill(); ink(c, 'rgba(70,60,45,.6)', 1.5);
+  rr(c, DOOR_X - 28, fy - 5, 56, 7, 2); c.fillStyle = '#a8703c'; c.fill(); ink(c, '#6b4420', 1);
+  const lx = dl + dw + 24, ly = top + 22;
+  rr(c, lx - 7, ly - 12, 14, 22, 3); c.fillStyle = lit ? '#ffe7a0' : '#e8eef2'; c.fill(); ink(c, '#2e2e2e', 2);
+  c.beginPath(); c.moveTo(lx - 10, ly - 12); c.lineTo(lx, ly - 20); c.lineTo(lx + 10, ly - 12); c.closePath(); c.fillStyle = '#2e2e2e'; c.fill();
+  // luz del momento del día; las ventanas van encima para que la luz de dentro se vea
+  if (sky[2]) { c.fillStyle = sky[2]; c.fillRect(-470, 0, 472, H); }
+  if (lit) {
+    const g = c.createRadialGradient(lx, ly, 2, lx, ly, 42); g.addColorStop(0, 'rgba(255,225,140,.55)'); g.addColorStop(1, 'rgba(255,225,140,0)');
+    c.fillStyle = g; c.fillRect(lx - 42, ly - 42, 84, 84);
+  }
+  houseWindow(c, -282, fy - 66, lit, munching ? Math.sin(G.loseT * 5) * 16 : null);
+  houseWindow(c, DOOR_X, gy(z.row >= 2 ? z.row - 2 : z.row + 2) - 66, lit, null);
+}
+function drawLoseWorld(c) { // oscuridad del recibidor y bocadillos de cómic mientras se oyen los mordiscos
+  const L = G.lz, top = gy(G.loseZ.row) + 2 - 120;
+  if (L.phase === 2) {
+    c.save(); c.globalAlpha *= (G.loseZ.enter || 0) * 0.8;
+    c.fillStyle = vgrad(c, top, top + 120, '#1d130b', '#0a0603'); c.fillRect(DOOR_X - 35, top, 70, 120);
+    c.restore();
+  }
+  const spots = [[DOOR_X - 78, top - 4], [DOOR_X + 46, top - 30], [DOOR_X - 168, top + 26]];
+  for (const b of L.bubbles) {
+    const u = G.loseT - b.t, [x, y] = spots[b.i % 3];
+    const fade = L.phase >= 5 ? clamp(1 - (G.loseT - L.t5) / 0.3, 0, 1) : 1;
+    if (fade <= 0) continue;
+    const sc = u < 0.12 ? 0.4 + (u / 0.12) * 0.75 : u < 0.22 ? 1.15 - (u - 0.12) / 0.1 * 0.15 : 1;
+    c.save(); c.globalAlpha *= fade; c.translate(x, y); c.rotate([-0.14, 0.1, -0.05][b.i % 3]); c.scale(sc, sc);
+    c.beginPath();
+    for (let j = 0; j < 16; j++) { const a = j / 16 * Math.PI * 2, r = j % 2 ? 25 : 36; c.lineTo(Math.cos(a) * r * 1.4, Math.sin(a) * r); }
+    c.closePath(); c.fillStyle = '#fff6cf'; c.fill(); ink(c, '#2a1a0a', 3);
+    c.font = '23px "Lilita One", sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle';
+    c.lineWidth = 5; c.strokeStyle = '#4a0d08'; c.strokeText('¡ÑAM!', 0, 1); c.fillStyle = '#e8402c'; c.fillText('¡ÑAM!', 0, 1);
+    c.restore();
+  }
+  c.textBaseline = 'alphabetic';
+}
+const DRIPS = [[-195, 16], [-112, 30], [-30, 12], [52, 26], [130, 18], [196, 10]];
+function drawLoseOverlay() {
+  const c = ctx, L = G.lz, t = G.loseT, v = clamp((t - 0.2) / 1.1, 0, 1) * 0.4;
+  const g = c.createRadialGradient(W / 2, H / 2, H * 0.25, W / 2, H / 2, W * 0.7);
+  g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(1, 'rgba(0,0,0,' + v + ')'); c.fillStyle = g; c.fillRect(0, 0, W, H);
+  if (L.phase < 5) return;
+  const u = t - L.t5, k = clamp(u / 0.35, 0, 1), sc = 0.35 + 0.65 * (1 - Math.pow(1 - k, 3)) + Math.sin(k * Math.PI) * 0.1;
+  c.fillStyle = 'rgba(12,8,4,' + 0.5 * clamp(u / 0.5, 0, 1) + ')'; c.fillRect(0, 0, W, H);
+  const j = u < 1 ? (1 - u) * 2.5 : 0;
+  c.save(); c.translate(W / 2 + rnd(-j, j), H / 2 - 20 + rnd(-j, j)); c.rotate(-0.035); c.scale(sc, sc);
+  c.font = '58px "Lilita One", sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle'; c.lineJoin = 'round';
+  ['¡LOS ZOMBIS SE COMIERON', 'TUS CEREBROS!'].forEach((line, i) => {
+    const y = (i - 0.5) * 70;
+    c.fillStyle = 'rgba(0,0,0,.45)'; c.fillText(line, 4, y + 7);
+    c.lineWidth = 12; c.strokeStyle = '#132008'; c.strokeText(line, 0, y);
+    const gr = c.createLinearGradient(0, y - 29, 0, y + 29); gr.addColorStop(0, '#d8f8a0'); gr.addColorStop(0.5, '#88d147'); gr.addColorStop(1, '#3f7f20');
+    c.fillStyle = gr; c.fillText(line, 0, y);
+  });
+  // babas verdes que gotean de las letras
+  const d = clamp((u - 0.35) / 1.3, 0, 1);
+  for (const [dx, len] of DRIPS) {
+    const h = len * d; if (h < 1) continue;
+    c.beginPath(); c.moveTo(dx - 4, 56); c.lineTo(dx - 4, 56 + h); c.arc(dx, 56 + h, 4, Math.PI, 0, true); c.lineTo(dx + 4, 56); c.closePath();
+    c.fillStyle = '#7cc540'; c.fill(); c.strokeStyle = '#132008'; c.lineWidth = 2.5; c.stroke();
+  }
+  c.restore(); c.textBaseline = 'alphabetic';
+}
+
 function render() {
   if (bgDirty) { renderBg(); bgDirty = false; }
-  ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.drawImage(bg, 0, 0);
-  ctx.setTransform(pxr, 0, 0, pxr, 0, 0);
+  const cam = G.lost && G.grid && G.lz ? loseCam() : null;
+  if (cam) {
+    ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.fillStyle = '#140e07'; ctx.fillRect(0, 0, cvs.width, cvs.height);
+    ctx.setTransform(pxr, 0, 0, pxr, 0, 0);
+    ctx.translate(W / 2, H / 2); ctx.scale(cam.z, cam.z); ctx.translate(-cam.x, -cam.y);
+    ctx.drawImage(bg, 0, 0, W, H);
+    drawHouse(ctx);
+  } else {
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.drawImage(bg, 0, 0);
+    ctx.setTransform(pxr, 0, 0, pxr, 0, 0);
+  }
   if (G.state === 'menu' || !G.grid) { drawMenuScene(); return; }
   ctx.save();
-  if (G.shake > 0) ctx.translate(rnd(-1, 1) * G.shake * 14, rnd(-1, 1) * G.shake * 10);
+  if (G.shake > 0 && !cam) ctx.translate(rnd(-1, 1) * G.shake * 14, rnd(-1, 1) * G.shake * 10);
   for (const m of G.mowers) if (!m.used) drawMower(m);
   // casilla donde caerá la planta
   const tgt = G.drag ? G.drag : (G.sel || G.shovel) && G.hover ? G.hover : null;
@@ -1812,7 +2045,14 @@ function render() {
   }
   for (const b of G.peas) drawPea(b);
   drawParts();
+  if (cam) drawLoseWorld(ctx);
   ctx.restore();
+  if (cam) { // durante la derrota no hay barra de semillas: se desvanece al empezar
+    ctx.setTransform(pxr, 0, 0, pxr, 0, 0);
+    if (G.loseT < 0.5) { ctx.globalAlpha = 1 - G.loseT / 0.5; drawBar(); ctx.globalAlpha = 1; }
+    drawLoseOverlay();
+    return;
+  }
   drawBar();
   for (const s of G.suns) drawSun(s);
   if (G.drag && G.drag.moved) { ctx.save(); ctx.globalAlpha = 0.85; drawPlantOn(ctx, { type: G.drag.type, t: G.t, hp: 1, max: 1, armed: true }, G.drag.x, G.drag.y + 30, 0.9); ctx.restore(); }
@@ -1858,6 +2098,7 @@ function hitCard(p) {
 }
 cvs.addEventListener('pointerdown', e => {
   audioInit();
+  if (G.state === 'losing') { e.preventDefault(); skipLose(); return; }
   if (G.state !== 'play') return;
   e.preventDefault();
   const p = toGame(e); G.hover = p;
@@ -1917,7 +2158,7 @@ function buildLevels() {
   });
 }
 function showMenu() {
-  G.state = 'menu'; G.grid = null; G.rows = ALL5; G.li = 0; bgDirty = true;
+  G.state = 'menu'; G.grid = null; G.rows = ALL5; G.li = 0; G.lost = false; bgDirty = true; musicDuck(false);
   buildLevels(); $('pause').hidden = true; $('result').hidden = true; $('menu').hidden = false;
 }
 function pauseGame() { if (G.state !== 'play') return; G.state = 'pause'; S.tick(); $('pause').hidden = false; }

@@ -1403,9 +1403,7 @@ function buildLevels() {
   LEVELS.forEach((L, i) => {
     const b = document.createElement('button');
     b.id = 'lv' + (i + 1);
-    b.innerHTML = (i + 1) + '<small>' + (i < progress - 1 ? 'hecho' : i < progress ? 'jugar' : 'cerrado') + '</small>';
-    b.disabled = i >= progress;
-    if (i < progress - 1) b.className = 'done';
+    b.innerHTML = (i + 1) + '<small>jugar</small>';
     b.title = L.name;
     b.addEventListener('click', () => { audioInit(); S.tick(); startLevel(i); });
     box.appendChild(b);

@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>Noche sin fin</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#05060a">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="description" content="Asimétrico de terror 2D para móvil: 4 supervivientes contra 1 asesino, con IA en Normal, Difícil y Pesadilla.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;500;600;700&family=Grenze+Gotisch:wght@600;800;900&family=Special+Elite&display=swap">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<canvas id="cv" aria-label="Partida"></canvas>
+
+<div id="hud" hidden>
+  <button id="btn-pause" class="hud-pause" aria-label="Pausa"><span></span><span></span></button>
+  <div class="objective">
+    <span class="gen-glyph" aria-hidden="true"><i></i><i></i><i></i></span>
+    <span id="obj-text">5 generadores</span>
+    <span id="collapse" class="collapse" hidden>Colapso <b id="collapse-t">2:00</b></span>
+  </div>
+  <ol id="roster" class="roster"></ol>
+  <div id="toasts" class="toasts" aria-live="polite"></div>
+</div>
+
+<div id="controls" hidden>
+  <div id="joyzone"></div>
+  <div id="joybase"><div id="joyknob"></div></div>
+  <div class="btns" id="btns">
+    <button class="cbtn ability" data-btn="ability" id="b-ability"><span class="ico" id="b-ability-ico"></span><span class="lbl" id="b-ability-lbl">Habilidad</span></button>
+    <button class="cbtn action" data-btn="action" id="b-action"><span class="lbl" id="b-action-lbl">Acción</span></button>
+    <button class="cbtn attack" data-btn="attack" id="b-attack"><span class="ico" id="b-attack-ico"></span><span class="lbl">Atacar</span></button>
+  </div>
+</div>
+
+<div id="screens">
+  <section id="scr-title" class="screen title-screen">
+    <div class="title-wrap">
+      <p class="eyebrow">Asimétrico de terror · cuatro contra uno</p>
+      <h1 class="logo"><span>Noche</span> <span>sin fin</span></h1>
+      <p class="tagline">Cuatro sobreviven. Uno caza. La niebla decide quién ve el amanecer.</p>
+      <div class="menu">
+        <button class="mbtn primary" data-go="role">Jugar</button>
+        <button class="mbtn" data-go="help">Cómo se juega</button>
+      </div>
+      <div class="toggles">
+        <button class="chip" id="tg-sound" aria-pressed="true">Sonido: sí</button>
+        <button class="chip" id="tg-vib" aria-pressed="true">Vibración: sí</button>
+        <button class="chip" id="tg-full">Pantalla completa</button>
+      </div>
+      <p class="hint">Mejor en horizontal. Joystick a la izquierda, acciones a la derecha.</p>
+    </div>
+  </section>
+
+  <section id="scr-role" class="screen" hidden>
+    <header class="scr-head"><button class="back" data-go="title">‹ Volver</button><h2>Elige bando</h2></header>
+    <div class="roles">
+      <button class="role-card" data-role="survivor">
+        <canvas class="portrait big" data-kind="survivor" data-id="sara"></canvas>
+        <span class="role-txt">
+          <span class="role-name">Superviviente</span>
+          <span class="role-desc">Repara 5 generadores con tu equipo, abre una puerta y escapa. No puedes pelear: corre, escóndete y tira palés.</span>
+        </span>
+      </button>
+      <button class="role-card killer" data-role="killer">
+        <canvas class="portrait big" data-kind="killer" data-id="carnicero"></canvas>
+        <span class="role-txt">
+          <span class="role-name">Asesino</span>
+          <span class="role-desc">Caza a los cuatro. Derríbalos, cuélgalos en los ganchos y no dejes que abran las puertas.</span>
+        </span>
+      </button>
+    </div>
+  </section>
+
+  <section id="scr-char" class="screen" hidden>
+    <header class="scr-head"><button class="back" data-go="role">‹ Volver</button><h2 id="char-title">Elige superviviente</h2></header>
+    <div id="char-list" class="char-list"></div>
+    <footer class="scr-foot"><button class="mbtn primary" id="char-next">Continuar</button></footer>
+  </section>
+
+  <section id="scr-diff" class="screen" hidden>
+    <header class="scr-head"><button class="back" data-go="char">‹ Volver</button><h2>Elige la dificultad</h2></header>
+    <div id="diff-list" class="diff-list"></div>
+    <footer class="scr-foot"><button class="mbtn primary" id="diff-start">Entrar en la niebla</button></footer>
+  </section>
+
+  <section id="scr-help" class="screen" hidden>
+    <header class="scr-head"><button class="back" data-go="title">‹ Volver</button><h2>Cómo se juega</h2></header>
+    <div class="help">
+      <article>
+        <h3>Superviviente</h3>
+        <ul>
+          <li><b>Joystick</b>: empújalo poco para caminar en silencio (sin marcas), a fondo para correr.</li>
+          <li><b>Acción</b> junto a un generador para repararlo. Moverte lo cancela.</li>
+          <li><b>Pruebas de habilidad</b>: pulsa Acción cuando la aguja cruce la zona clara. En la zona dorada ganas progreso extra; si fallas, el generador explota y el asesino te oye.</li>
+          <li>Tira <b>palés</b> cuando el asesino esté justo detrás para aturdirlo. Salta <b>ventanas</b> para ganar distancia.</li>
+          <li>Dos golpes te derriban. En el suelo te arrastras; un aliado puede levantarte.</li>
+          <li>Si te cargan, pulsa Acción muy rápido para soltarte. En el gancho, espera a que te rescaten: a la tercera vez, mueres.</li>
+          <li>Con 5 generadores, abre una <b>puerta</b> y escapa antes de que acabe el colapso. Si quedas solo, busca la <b>trampilla</b>.</li>
+        </ul>
+      </article>
+      <article>
+        <h3>Asesino</h3>
+        <ul>
+          <li><b>Atacar</b>: embiste hacia donde miras. Hay ayuda de puntería si alguien está cerca.</li>
+          <li><b>Acción</b>: recoger a un caído, colgarlo en un gancho, romper palés, saltar ventanas, patear generadores.</li>
+          <li>Ves las <b>marcas rojas</b> que dejan al correr, la sangre de los heridos y avisos amarillos cuando hacen ruido.</li>
+          <li>Los generadores sin reparar se marcan en blanco. Patéalos para que pierdan progreso.</li>
+          <li>Cada asesino tiene una <b>habilidad</b> propia: úsala con el botón superior.</li>
+        </ul>
+      </article>
+      <article>
+        <h3>Modos de la IA</h3>
+        <ul>
+          <li><b>Normal</b>: reacciones lentas y errores frecuentes. Ideal para aprender.</li>
+          <li><b>Difícil</b>: la IA rastrea marcas, patrulla con cabeza, usa bien palés y habilidades.</li>
+          <li><b>Pesadilla</b>: predice tus movimientos, acampa y persigue sin descanso. Menos visión, luces que parpadean y pruebas que giran al revés.</li>
+        </ul>
+        <p class="keys">Teclado: WASD o flechas · Mayús caminar · Espacio acción · E habilidad · J atacar · Esc pausa</p>
+      </article>
+    </div>
+  </section>
+
+  <section id="scr-intro" class="screen intro" hidden>
+    <div class="intro-wrap">
+      <p class="eyebrow" id="intro-eyebrow">Te enfrentas a</p>
+      <h2 class="intro-name" id="intro-name">El Carnicero</h2>
+      <p class="intro-ability" id="intro-ability"></p>
+      <p class="intro-goal" id="intro-goal"></p>
+      <button class="mbtn primary" id="intro-go">Empezar</button>
+    </div>
+  </section>
+
+  <section id="scr-pause" class="screen" hidden>
+    <div class="pause-wrap">
+      <h2>Pausa</h2>
+      <p class="pause-info" id="pause-info"></p>
+      <div class="menu">
+        <button class="mbtn primary" id="p-resume">Reanudar</button>
+        <button class="mbtn" id="p-restart">Reiniciar partida</button>
+        <button class="mbtn" id="p-quit">Abandonar</button>
+      </div>
+      <div class="toggles">
+        <button class="chip" id="tg-sound2" aria-pressed="true">Sonido: sí</button>
+      </div>
+    </div>
+  </section>
+
+  <section id="scr-end" class="screen end" hidden>
+    <div class="end-wrap">
+      <p class="eyebrow" id="end-eyebrow">Resultado</p>
+      <h2 class="end-title" id="end-title">Has escapado</h2>
+      <p class="end-sub" id="end-sub"></p>
+      <table class="end-table"><tbody id="end-rows"></tbody></table>
+      <p class="points">Puntos de sangre <b id="end-points">0</b></p>
+      <div class="menu row">
+        <button class="mbtn primary" id="e-again">Revancha</button>
+        <button class="mbtn" id="e-menu">Menú</button>
+      </div>
+    </div>
+  </section>
+</div>
+
+<div id="rotate" class="rotate" hidden>Gira el móvil para jugar en horizontal <button class="chip" id="rotate-ok">Seguir así</button></div>
+
+<script src="js/data.js"></script>
+<script src="js/util.js"></script>
+<script src="js/map.js"></script>
+<script src="js/entities.js"></script>
+<script src="js/ai.js"></script>
+<script src="js/game.js"></script>
+<script src="js/audio.js"></script>
+<script src="js/render.js"></script>
+<script src="js/input.js"></script>
+<script src="js/ui.js"></script>
+</body>
+</html>

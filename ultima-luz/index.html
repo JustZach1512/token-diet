@@ -138,6 +138,8 @@ details.how ul { margin: 8px 0 0; padding-left: 18px; color: #cfc7b4; font-size:
 #objective.collapse svg, #objective.collapse b { color: var(--blood-hi); }
 .iconbtn { pointer-events: auto; width: 42px; height: 42px; border-radius: 50%; background: var(--panel); border: 1px solid var(--line); display: grid; place-items: center; }
 .iconbtn svg { width: 18px; height: 18px; }
+#fps { position: absolute; left: max(12px, var(--sl)); top: calc(62px + var(--st)); font: 600 12px/1 var(--f-ui); letter-spacing: .08em; color: var(--good); text-shadow: 0 1px 3px #000; font-variant-numeric: tabular-nums; }
+#fps.mid { color: var(--ember); } #fps.low { color: var(--blood-hi); }
 #toasts { position: absolute; top: calc(64px + var(--st)); left: 50%; transform: translateX(-50%); width: min(520px, 86vw); display: grid; gap: 6px; justify-items: center; }
 .toast { padding: 7px 14px; background: var(--panel); border: 1px solid var(--line); border-radius: 3px; font-size: 14.5px; text-align: center; animation: toastIn .25s ease-out, toastOut .5s ease-in forwards; animation-delay: 0s, var(--life, 3.6s); }
 .toast.big { font: 400 20px/1.2 var(--f-display); padding: 10px 18px; letter-spacing: .02em; }
@@ -261,6 +263,7 @@ details.how ul { margin: 8px 0 0; padding-left: 18px; color: #cfc7b4; font-size:
       <div id="objective"></div>
       <button class="iconbtn" id="btnPause" aria-label="Pausa"><svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg></button>
     </div>
+    <div id="fps">-- FPS</div>
     <div id="toasts"></div>
     <div id="status">
       <div id="statusText"></div>

@@ -246,6 +246,15 @@ class App {
     const dt = Math.min(0.1, (now - this.last) / 1000);
     this.last = now;
     this.t += dt;
+    this._fpsN = (this._fpsN || 0) + 1;
+    this._fpsT = (this._fpsT || 0) + dt;
+    if (this._fpsT >= 0.5) {
+      const fps = Math.round(this._fpsN / this._fpsT);
+      this._fpsN = 0; this._fpsT = 0;
+      const el = this._fpsEl || (this._fpsEl = document.getElementById('fps'));
+      el.textContent = `${fps} FPS`;
+      el.className = fps >= 50 ? '' : fps >= 30 ? 'mid' : 'low';
+    }
     if (this.game) {
       const g = this.game;
       if (!this.paused) g.update(dt);

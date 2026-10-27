@@ -1,0 +1,17 @@
+{
+  "name": "ultima-luz",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Asimétrico de terror 3D para móvil (4 supervivientes vs 1 asesino) con IA en Normal, Difícil y Pesadilla.",
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "serve": "npx --yes http-server -c-1 -p 8080 ."
+  },
+  "dependencies": {
+    "three": "0.160.0"
+  },
+  "devDependencies": {
+    "esbuild": "0.24.0"
+  }
+}

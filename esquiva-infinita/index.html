@@ -52,6 +52,13 @@ body.hidecursor #c{cursor:none}
 .ad-speed input[type=range]{flex:1;accent-color:var(--spark)}
 .ad-speed input[type=number]{width:78px;padding:6px 8px;border-radius:8px;border:1px solid #4b3a80;background:var(--void);color:var(--ink);font:700 14px var(--body)}
 .ad-note{margin:0;font:500 13px/1.4 var(--body);color:#8a7fb0}
+#admin{max-height:calc(100vh - 24px);overflow-y:auto}
+.ad-sub{font:700 15px/1.2 var(--body);color:var(--ink)}
+.ad-wave{display:flex;align-items:center;gap:10px;font:500 13px var(--body);color:#8a7fb0}
+.ad-wave input,.ad-wave select{padding:6px 8px;border-radius:8px;border:1px solid #4b3a80;background:var(--void);color:var(--ink);font:700 14px var(--body)}
+.ad-wave input{width:72px}
+.ad-wave select{flex:1;min-width:0;font-weight:500}
+.ad-go{padding:10px 12px;border-radius:10px;border:2px solid var(--neon);background:var(--panel);color:var(--neon);font:700 15px/1.2 var(--body);cursor:pointer}
 </style>
 </head>
 <body>
@@ -75,6 +82,15 @@ body.hidecursor #c{cursor:none}
     <button type="button" class="ad-tog" id="ad3" aria-pressed="false"><kbd>3</kbd>Orbes defensores<span class="st">OFF</span></button>
     <p class="ad-note">Disparan solos a la bala más cercana y la destruyen. No afectan a muros, láseres ni casillas.</p>
   </div>
+  <div class="ad-row">
+    <span class="ad-sub">Elegir oleada</span>
+    <div class="ad-wave">
+      <label for="adWaveN">Oleada</label><input type="number" id="adWaveN" min="1" max="999" step="1" value="1">
+      <select id="adWaveP" aria-label="Ataque de la oleada"><option value="">Ataque aleatorio</option></select>
+    </div>
+    <button type="button" class="ad-go" id="adGo">Jugar esta oleada</button>
+    <p class="ad-note">Empieza ya esa oleada con su dificultad. Con "aleatorio" sale lo que tocaría en esa oleada.</p>
+  </div>
   <p class="ad-note">La partida está en pausa. <kbd>H</kbd> o <kbd>Esc</kbd> para volver.</p>
 </div>
 <script>
@@ -97,8 +113,8 @@ const angTo = (ax, ay, bx, by) => Math.atan2(by - ay, bx - ax);
 const angDiff = (a, b) => { let d = (a - b) % TAU; if (d > Math.PI) d -= TAU; if (d < -Math.PI) d += TAU; return d; };
 function shuffle(a){ for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; }
 function rgba(hex, a){ const n = parseInt(hex.slice(1), 16); return `rgba(${n >> 16},${(n >> 8) & 255},${n & 255},${a})`; }
-const sp = d => Math.min(G.hard ? 2.6 : 2.1, 1 + (d - 1) * 0.25);   // velocidad de los ataques
-const rt = d => Math.min(G.hard ? 3 : 2.4, 1 + (d - 1) * 0.3);    // frecuencia de los ataques
+const sp = d => Math.min(G.hard ? 2.4 : 2.1, 1 + (d - 1) * 0.25);   // velocidad de los ataques
+const rt = d => Math.min(G.hard ? 2.7 : 2.4, 1 + (d - 1) * 0.3);    // frecuencia de los ataques
 const fmtTime = s => Math.floor(s / 60) + ':' + String(Math.floor(s % 60)).padStart(2, '0');
 
 const Store = {
@@ -368,7 +384,7 @@ const keys = {}, hit = {};
 const keyName = e => KEYMAP[e.key && e.key.length === 1 ? e.key.toLowerCase() : e.key];
 addEventListener('keydown', e => {
   const k = keyName(e);
-  if (e.target && e.target.tagName === 'INPUT' && k !== 'admin' && k !== 'pause') {   // escribiendo la velocidad en el panel
+  if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') && k !== 'admin' && k !== 'pause') {   // escribiendo la velocidad en el panel
     if (e.key === 'Enter') e.target.blur();
     return;
   }
@@ -516,7 +532,7 @@ const scoreMul = () => G.hard ? 2 : 1;   // hardcore puntúa doble
 function hurt(base){
   if (P.inv > 0 || P.shieldT > 0 || G.god || (G.admin && ADM.immune) || !P.alive) return;
   const dmg = G.hard ? 3 : Math.round(base + Math.max(0, D.diff - 1) * 0.6);   // hardcore: siempre 3
-  P.hp = Math.max(0, P.hp - dmg); P.inv = G.hard ? 0.8 : 1.1; G.combo = 0; D.noHit = false;
+  P.hp = Math.max(0, P.hp - dmg); P.inv = G.hard ? 1.0 : 1.1; G.combo = 0; D.noHit = false;
   G.shake = RM ? 2 : 9; G.flash = RM ? 0.06 : 0.28; A.flash = 0.4;
   burst(P.x, P.y, C.hazard, 14, 160, 0.5, 3);
   popup(P.x, P.y - 18, '-' + dmg, C.hazard);
@@ -554,7 +570,7 @@ function spawn(o){
     color: C.ink, kind: null, dmg: 3, t: 0, warn: 0, life: 30, grazeCd: 0, dead: false, safe: false,
     update: null, draw: null, over: null, keep: false }, o);
   if (b.destructible === undefined) b.destructible = b.shape === 'circle' && b.r <= 9;
-  if (G.hard && b.warn > 0) b.warn *= 0.75;   // hardcore: avisos más cortos
+  if (G.hard && b.warn > 0) b.warn *= 0.85;   // hardcore: avisos algo más cortos
   bullets.push(b); return b;
 }
 function move(b, dt){ b.vx += b.ax * dt; b.vy += b.ay * dt; b.x += b.vx * dt; b.y += b.vy * dt; }
@@ -1231,7 +1247,7 @@ def({ id: 'singularidad', name: 'SINGULARIDAD', minWave: 9, box: [340, 340], dur
 const LINES = ['¿Aún sigues ahí?', 'Esta la diseñé pensando en ti.', 'Más rápido. Más denso. Más bonito.', 'Nadie dura para siempre.',
   'Me gusta cómo esquivas.', 'Veamos cuánto aguantas.', 'Ni yo sé qué viene ahora.', 'No es nada personal. Es geometría.',
   'Respira. Yo no lo necesito.', 'Cada oleada, un plano nuevo.'];
-const HC_LINES = ['Cuatro golpes. Es todo lo que aguantas.', 'Más rápido. Siempre más rápido.', 'Los avisos largos son para otros modos.',
+const HC_LINES = ['Cinco golpes. Es todo lo que aguantas.', 'Más rápido. Siempre más rápido.', 'Los avisos largos son para otros modos.',
   '¿Todavía brillas, chispa?', 'Cada tres oleadas te dejo respirar. Poco.', 'Esto ya no es un juego. Bueno, sí.'];
 const COMBO_LINES = ['Dos planos a la vez. ¿Sabrás leerlos?', 'Mezclemos ideas.', 'Esto ya es arquitectura avanzada.'];
 const OVER_LINES = ['Buen intento. Ya estoy diseñando la siguiente.', 'La caja te echará de menos.', 'Otra vez. Sé que quieres.', 'Tomo nota de tus errores. De todos.'];
@@ -1239,12 +1255,12 @@ const OVER_LINES = ['Buen intento. Ya estoy diseñando la siguiente.', 'La caja 
 const G = { state: 'title', paused: false, score: 0, time: 0, grazes: 0, combo: 0, shake: 0, flash: 0, clock: 0,
   deadT: 0, overT: 0, god: false, newBest: false, overLine: '', admin: false, ctrl: 'keys', hard: false, menu: 'main', sel: 0 };
 const D = { wave: 0, phase: 'idle', t: 0, picks: [], runs: [], bag: [], seen: new Set(), diff: 1, noHit: true,
-  dur: 9, transDur: 1.5, isNew: false, combo: false, healAt: -1, last: null };
+  dur: 9, transDur: 1.5, isNew: false, combo: false, healAt: -1, last: null, force: null };
 
 function clearField(){ bullets.length = particles.length = popups.length = pickups.length = pulses.length = shots.length = 0; }
 function startRun(admin = G.admin, ctrl = G.ctrl, hard = G.hard){
   G.admin = admin; G.ctrl = ctrl; G.hard = hard && !admin;
-  const hp = G.hard ? 10 : 20; ADM.open = false; adEl.hidden = true;
+  const hp = G.hard ? 15 : 20; ADM.open = false; adEl.hidden = true;
   clearField();
   Object.assign(P, { x: 300, y: 470, hp, maxHp: hp, trail: hp, inv: 0, charge: 0, mode: 'free', vy: 0, ground: false, alive: true, stillT: 1, extX: 0, extY: 0, shieldT: 0, shieldCd: 0 });
   Object.assign(G, { state: 'play', paused: false, score: 0, time: 0, grazes: 0, combo: 0, deadT: 0, newBest: false });
@@ -1256,7 +1272,7 @@ function startRun(admin = G.admin, ctrl = G.ctrl, hard = G.hard){
 }
 function chooseWave(){
   const elig = G.hard ? PATTERNS : PATTERNS.filter(p => p.minWave <= D.wave);
-  const comboWave = G.hard ? D.wave >= 3 && D.wave % 2 === 1 : D.wave >= 10 && ((D.wave - 10) % 4 === 0 || (D.wave > 24 && D.wave % 3 === 0));
+  const comboWave = G.hard ? D.wave >= 4 && D.wave % 3 === 1 : D.wave >= 10 && ((D.wave - 10) % 4 === 0 || (D.wave > 24 && D.wave % 3 === 0));
   if (comboWave) {
     const pool = elig.filter(p => p.combo && (G.hard || D.seen.has(p.id)));
     if (pool.length >= 2) { const a = pick(pool); let b; do b = pick(pool); while (b === a); return [a, b]; }
@@ -1269,18 +1285,19 @@ function chooseWave(){
   return [p];
 }
 function nextWave(){
-  D.wave++; D.diff = G.hard ? 2 + (D.wave - 1) * 0.18 : 1 + (D.wave - 1) * 0.11; D.noHit = true; D.t = 0; D.phase = 'trans';
-  const picks = D.picks = chooseWave();
+  D.wave++; D.diff = G.hard ? 1.6 + (D.wave - 1) * 0.14 : 1 + (D.wave - 1) * 0.11; D.noHit = true; D.t = 0; D.phase = 'trans';
+  const forced = !!D.force, picks = D.picks = forced ? [D.force] : chooseWave();
+  D.force = null;
   D.last = picks[0]; D.combo = picks.length > 1;
-  D.isNew = picks.some(p => !D.seen.has(p.id));
+  D.isNew = !forced && picks.some(p => !D.seen.has(p.id));
   picks.forEach(p => D.seen.add(p.id));
   arena.set(Math.max(...picks.map(p => p.box[0])), Math.max(...picks.map(p => p.box[1])));
   P.mode = picks.some(p => p.mode === 'gravity') ? 'gravity' : 'free'; P.vy = 0;
-  D.transDur = G.hard ? (D.wave === 1 ? 1.6 : 1.0) : D.wave === 1 ? 2.0 : 1.5;
+  D.transDur = G.hard ? (D.wave === 1 ? 1.8 : 1.3) : D.wave === 1 ? 2.0 : 1.5;
   Music.level = G.hard ? 4 : D.wave >= 6 ? 3 : D.wave >= 3 ? 2 : 1;
   Music.bpm = G.hard ? 150 + Math.min(22, D.wave * 1.5) : 128 + Math.min(28, D.wave * 1.2);
   AudioSys.riser(D.transDur); AudioSys.musDuck(true, D.transDur * 0.8);
-  if (G.hard) { if (D.wave === 1) Boss.say('Modo hardcore. Cuatro golpes y fuera. Te curo cada tres oleadas... si llegas.'); else if (Math.random() < 0.45) Boss.say(pick(HC_LINES)); }
+  if (G.hard) { if (D.wave === 1) Boss.say('Modo hardcore. Cinco golpes y fuera. Te curo cada tres oleadas... si llegas.'); else if (Math.random() < 0.45) Boss.say(pick(HC_LINES)); }
   else if (D.combo) Boss.say(pick(COMBO_LINES));
   else if (D.isNew) Boss.say(picks[0].line);
   else if (Math.random() < 0.4) Boss.say(pick(LINES));
@@ -1289,7 +1306,7 @@ function nextWave(){
 function beginAttack(){
   D.phase = 'attack'; D.t = 0;
   D.runs = D.picks.map(p => {
-    const S = { m: D.combo ? (G.hard ? 0.8 : 0.62) : 1 }, d = G.hard ? D.diff : Math.max(1, D.diff - (D.combo ? 0.5 : D.isNew ? 0.6 : 0));
+    const S = { m: D.combo ? (G.hard ? 0.7 : 0.62) : 1 }, d = G.hard ? D.diff - (D.combo ? 0.3 : 0) : Math.max(1, D.diff - (D.combo ? 0.5 : D.isNew ? 0.6 : 0));
     p.init(S, d); return { p, S, d };
   });
   D.dur = Math.max(...D.picks.map(p => p.dur));
@@ -1651,9 +1668,9 @@ function drawTitle(){
     txt(it.label, 312, cy + 7, 18, sel ? (red ? '#ffd0de' : C.ink) : rgba(red ? C.hazard : C.ink, 0.6), 'center', FD);
   });
   const rows = G.menu === 'admin'
-    ? [['H', 'abrir o cerrar el panel en partida'], ['1', 'velocidad extra (tú eliges cuánta)'], ['2', 'inmunidad infinita'], ['3', 'orbes que destruyen balas'], ['Ojo', 'en modo admin no se guarda el récord']]
+    ? [['H', 'abrir o cerrar el panel en partida'], ['1', 'velocidad extra (tú eliges cuánta)'], ['2', 'inmunidad infinita'], ['3', 'orbes que destruyen balas'], ['Panel', 'elige la oleada y el ataque'], ['Ojo', 'en modo admin no se guarda el récord']]
     : hl
-      ? [['Vida', '10 PV · cada golpe quita 3'], ['Ataques', 'más rápidos, más densos y avisan menos'], ['Combos', 'dos ataques a la vez cada dos oleadas'], ['Curas', 'solo +7 PV automáticos cada 3 oleadas'], ['Premio', 'puntos x2 y récord propio']]
+      ? [['Vida', '15 PV · cada golpe quita 3'], ['Ataques', 'más rápidos, más densos y avisan menos'], ['Combos', 'dos ataques a la vez cada tres oleadas'], ['Curas', 'solo +7 PV automáticos cada 3 oleadas'], ['Premio', 'puntos x2 y récord propio']]
       : isTouch
         ? [['Arrastra', 'mover la chispa'], ['Roza balas', 'llena la CARGA del PULSO'], ['INVENC.', 'invencible 15 s · recarga 30 s'], ['Cada 3 oleadas', 'te curas 7 PV'], ['SALTO', 'saltar en modo gravedad']]
         : [['WASD / ratón', 'mover (según el modo)'], ['Roza balas', 'suma puntos y llena la CARGA'], ['X', 'pulso que borra balas pequeñas'], ['P', 'invencibilidad 15 s · recarga 30 s'], ['Cada 3 oleadas', 'te curas 7 PV'], ['Espacio / clic', 'saltar en modo gravedad']];
@@ -1730,10 +1747,22 @@ function adminToggle(k){
   popup(P.x, P.y - 24, ['', 'VELOCIDAD ' + ADM.speed, 'INMUNIDAD', 'ORBES'][k] + (on ? ' ON' : ' OFF'), on ? C.spark : C.dim);
   AudioSys.play(on ? 'select' : 'pop'); adminSync();
 }
+const adWN = document.getElementById('adWaveN'), adWP = document.getElementById('adWaveP');
+PATTERNS.forEach(p => adWP.add(new Option(p.name.charAt(0) + p.name.slice(1).toLowerCase(), p.id)));
+function adminJump(){   // salta a la oleada elegida, con el ataque elegido o el que toque
+  if (G.state !== 'play') return;
+  const n = clamp(Math.round(+adWN.value) || 1, 1, 999);
+  adminOpen(false);
+  clearField(); D.runs = []; D.healAt = -1;
+  D.wave = n - 1; D.force = PATTERNS.find(q => q.id === adWP.value) || null;
+  nextWave(); AudioSys.play('select');
+}
+document.getElementById('adGo').addEventListener('click', e => { e.currentTarget.blur(); adminJump(); });
+adWN.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); adminJump(); } });
 function adminOpen(o){
   if (o && G.state !== 'play') return;
   ADM.open = o; adEl.hidden = !o;
-  if (o) { adminSync(); setPause(true); }
+  if (o) { adminSync(); adWN.value = Math.max(1, D.wave); setPause(true); }
   else { if (adEl.contains(document.activeElement)) document.activeElement.blur(); setPause(false); }
 }
 function setSpeed(v){ ADM.speed = clamp(Math.round(+v) || 450, 50, 1500); Store.set('esquiva.adspeed', ADM.speed); }

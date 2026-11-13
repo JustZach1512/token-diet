@@ -376,7 +376,7 @@ let TOUCH=false;
 addEventListener('keydown',e=>{if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space','Tab'].includes(e.code))e.preventDefault();KEYS[e.code]=true;if(!e.repeat)LATCH[e.code]=true;auInit();});
 addEventListener('keyup',e=>{KEYS[e.code]=false;});
 addEventListener('blur',()=>{for(const k in KEYS)KEYS[k]=false;});
-addEventListener('mousedown',()=>auInit());
+addEventListener('mousedown',()=>{auInit();try{cv.focus();}catch(e){}if(typeof G!=='undefined'&&G.mode!=='play')LATCH.Enter=true;});
 function pollPad(){
   const o={};let pads=[];try{pads=navigator.getGamepads?navigator.getGamepads():[];}catch(e){}
   for(const p of pads){if(!p||!p.connected)continue;const b=i=>p.buttons[i]&&p.buttons[i].pressed;const ax=p.axes[0]||0,ay=p.axes[1]||0;
@@ -2259,7 +2259,7 @@ function bar(v){const n=Math.round(v*10);return'['+'='.repeat(n)+' '.repeat(10-n
 function updOptions(back){
   const m=G.menu;menuNav(5);
   if(m.i<2&&(pressed('left')||pressed('right'))){const d=pressed('right')?.1:-.1;if(m.i===0)OPT.mv=clamp(Math.round((OPT.mv+d)*10)/10,0,1);else OPT.sv=clamp(Math.round((OPT.sv+d)*10)/10,0,1);setVolumes();saveOpt();sfx('menu');}
-  if(pressed('ok')||((pressed('left')||pressed('right'))&&m.i===2)){if(m.i===2){OPT.shake=!OPT.shake;saveOpt();sfx('sel');}else if(m.i===3){try{if(!document.fullscreenElement)document.documentElement.requestFullscreen();else document.exitFullscreen();}catch(e){}sfx('sel');}else if(m.i===4){back();sfx('back');}}
+  if(pressed('ok')||((pressed('left')||pressed('right'))&&m.i===2)){if(m.i===2){OPT.shake=!OPT.shake;saveOpt();sfx('sel');}else if(m.i===3){try{const pr=!document.fullscreenElement?document.documentElement.requestFullscreen():document.exitFullscreen();if(pr&&pr.catch)pr.catch(()=>{});}catch(e){}sfx('sel');}else if(m.i===4){back();sfx('back');}}
   if(pressed('back'))back(),sfx('back');
 }
 function drawOptions(){drawFrame(W/2-260,110,520,320,GOLD,.95);txt('OPCIONES',W/2,132,22,'#f4ecd8','center',{glow:'#ffd27a',w:.09});ornLine(W/2,166,260,GOLD);drawMenuItems(optItems(),W/2,196,42,G.menu.i);}
@@ -2301,6 +2301,7 @@ function drawTitle(){
   txt('VELAHONDA',W*.36,92,64,'#f6eed8','center',{glow:'#ffb45a',w:.075});ornLine(W*.36,176,440,GOLD);txt('La Última Mecha',W*.36,190,20,'#d8c8a8','center');
   if(!G.sub)drawMenuItems(titleItems(),W*.36,270,44,G.menu.i);
   txt('Flechas/WASD · Z saltar · X atacar · C impulso · V luz · M mapa',W/2,H-30,11,'#8a8070','center');
+  if(!AU.on&&Math.sin(G.t*3)>-.4)txt('Haz clic o pulsa Enter para empezar',W*.36,452,12,'#ffd27a','center');
   ctx.globalAlpha=1;
   if(G.sub==='opt')drawOptions();else if(G.sub==='ctl')drawControls();
   else if(G.sub==='confirm'){drawFrame(W/2-250,200,500,150,GOLD,.96);txt('¿Empezar de nuevo? Se perderá la partida guardada.',W/2,230,13,'#ece4d0','center');

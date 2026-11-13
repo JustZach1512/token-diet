@@ -515,7 +515,7 @@ const scoreMul = () => G.hard ? 2 : 1;   // hardcore puntúa doble
 
 function hurt(base){
   if (P.inv > 0 || P.shieldT > 0 || G.god || (G.admin && ADM.immune) || !P.alive) return;
-  const dmg = Math.round(base * (G.hard ? 1.5 : 1) + Math.max(0, D.diff - 1) * 0.6);
+  const dmg = G.hard ? 3 : Math.round(base + Math.max(0, D.diff - 1) * 0.6);   // hardcore: siempre 3
   P.hp = Math.max(0, P.hp - dmg); P.inv = G.hard ? 0.8 : 1.1; G.combo = 0; D.noHit = false;
   G.shake = RM ? 2 : 9; G.flash = RM ? 0.06 : 0.28; A.flash = 0.4;
   burst(P.x, P.y, C.hazard, 14, 160, 0.5, 3);
@@ -729,18 +729,19 @@ function drawPulses(){
 }
 
 // ================= Invencibilidad (tecla I) =================
-const SHIELD_DUR = 15, shieldCdMax = () => G.hard ? 60 : 30;
+const SHIELD_DUR = 15, SHIELD_CD = 30;   // la recarga empieza cuando se acaba la invencibilidad
 function useShield(){
   if (!P.alive) return;
+  if (P.shieldT > 0) return;
   if (P.shieldCd > 0) { popup(P.x, P.y - 22, 'Recargando: ' + Math.ceil(P.shieldCd) + ' s', C.dim); return; }
-  P.shieldT = SHIELD_DUR; P.shieldCd = shieldCdMax();
+  P.shieldT = SHIELD_DUR;
   AudioSys.play('shield'); popup(P.x, P.y - 22, '¡INVENCIBLE ' + SHIELD_DUR + ' s!', C.spark); burst(P.x, P.y, C.spark, 18, 150, 0.5, 2.5);
   Boss.mood('surprised', 0.8);
 }
 function updateShield(dt){
   if (P.shieldT > 0) {
     const before = Math.ceil(P.shieldT);
-    if ((P.shieldT -= dt) <= 0) AudioSys.play('shieldEnd');
+    if ((P.shieldT -= dt) <= 0) { P.shieldT = 0; P.shieldCd = SHIELD_CD; AudioSys.play('shieldEnd'); }
     else if (before <= 3 && Math.ceil(P.shieldT) < before) AudioSys.play('tick');   // aviso: quedan 3, 2, 1 s
   }
   if (P.shieldCd > 0 && (P.shieldCd -= dt) <= 0) { AudioSys.play('shieldReady'); popup(P.x, P.y - 22, 'INVENCIBILIDAD LISTA', C.spark); }
@@ -1230,8 +1231,8 @@ def({ id: 'singularidad', name: 'SINGULARIDAD', minWave: 9, box: [340, 340], dur
 const LINES = ['¿Aún sigues ahí?', 'Esta la diseñé pensando en ti.', 'Más rápido. Más denso. Más bonito.', 'Nadie dura para siempre.',
   'Me gusta cómo esquivas.', 'Veamos cuánto aguantas.', 'Ni yo sé qué viene ahora.', 'No es nada personal. Es geometría.',
   'Respira. Yo no lo necesito.', 'Cada oleada, un plano nuevo.'];
-const HC_LINES = ['Dos golpes. Es todo lo que aguantas.', 'Más rápido. Siempre más rápido.', 'Los avisos largos son para otros modos.',
-  '¿Todavía brillas, chispa?', 'Ni una cura. Ni una.', 'Esto ya no es un juego. Bueno, sí.'];
+const HC_LINES = ['Cuatro golpes. Es todo lo que aguantas.', 'Más rápido. Siempre más rápido.', 'Los avisos largos son para otros modos.',
+  '¿Todavía brillas, chispa?', 'Cada tres oleadas te dejo respirar. Poco.', 'Esto ya no es un juego. Bueno, sí.'];
 const COMBO_LINES = ['Dos planos a la vez. ¿Sabrás leerlos?', 'Mezclemos ideas.', 'Esto ya es arquitectura avanzada.'];
 const OVER_LINES = ['Buen intento. Ya estoy diseñando la siguiente.', 'La caja te echará de menos.', 'Otra vez. Sé que quieres.', 'Tomo nota de tus errores. De todos.'];
 
@@ -1279,7 +1280,7 @@ function nextWave(){
   Music.level = G.hard ? 4 : D.wave >= 6 ? 3 : D.wave >= 3 ? 2 : 1;
   Music.bpm = G.hard ? 150 + Math.min(22, D.wave * 1.5) : 128 + Math.min(28, D.wave * 1.2);
   AudioSys.riser(D.transDur); AudioSys.musDuck(true, D.transDur * 0.8);
-  if (G.hard) { if (D.wave === 1) Boss.say('Modo hardcore. Aquí no hay curas ni segundas oportunidades.'); else if (Math.random() < 0.45) Boss.say(pick(HC_LINES)); }
+  if (G.hard) { if (D.wave === 1) Boss.say('Modo hardcore. Cuatro golpes y fuera. Te curo cada tres oleadas... si llegas.'); else if (Math.random() < 0.45) Boss.say(pick(HC_LINES)); }
   else if (D.combo) Boss.say(pick(COMBO_LINES));
   else if (D.isNew) Boss.say(picks[0].line);
   else if (Math.random() < 0.4) Boss.say(pick(LINES));
@@ -1296,6 +1297,7 @@ function beginAttack(){
   D.healAt = Math.random() < chance ? rand(2, D.dur - 3) : -1;
   Boss.cast = 1; AudioSys.play('impact'); AudioSys.musDuck(false); AudioSys.crashNow();
 }
+const HEAL_EVERY = 3, HEAL_AMOUNT = 7;
 function endAttack(){
   D.phase = 'clear'; D.t = 0; D.runs = [];
   let n = 0;
@@ -1309,6 +1311,11 @@ function endAttack(){
     popup(300, A.y + 26, '+' + Math.round(bonus * 1.5) + ' pts' + (healed ? ' · +1 PV' : ''), C.ink);
     AudioSys.play('perfect');
   } else { G.score += bonus; popup(300, A.y, 'SUPERADA +' + bonus, C.ink, true); }
+  if (D.wave % HEAL_EVERY === 0) {   // cada 3 oleadas: +7 PV automáticos
+    const before = P.hp; P.hp = Math.min(P.maxHp, P.hp + HEAL_AMOUNT);
+    popup(300, A.y + 52, P.hp > before ? 'CURA DE OLEADA +' + (P.hp - before) + ' PV' : 'CURA DE OLEADA · PV al máximo', C.heal);
+    burst(P.x, P.y, C.heal, 20, 150, 0.6, 2.5); AudioSys.play('heal');
+  }
 }
 function updateDirector(dt){
   D.t += dt;
@@ -1596,7 +1603,7 @@ function drawBottom(){
   else numText(Math.floor(P.charge) + '%', V, y2 + 13, 16, C.ink);
   txt('INVENC.', 24, y3 + 13, 14, C.dim, 'left');
   if (P.shieldT > 0) { hudBar(X, y3, P.shieldT / SHIELD_DUR, C.spark, C.spark); txt('ACTIVA ' + P.shieldT.toFixed(1) + ' s', V, y3 + 13, 13, C.spark, 'left'); }
-  else if (P.shieldCd > 0) { hudBar(X, y3, 1 - P.shieldCd / shieldCdMax(), rgba(C.spark, 0.35)); numText(Math.ceil(P.shieldCd) + ' s', V, y3 + 13, 16, C.ink); }
+  else if (P.shieldCd > 0) { hudBar(X, y3, 1 - P.shieldCd / SHIELD_CD, rgba(C.spark, 0.35)); numText(Math.ceil(P.shieldCd) + ' s', V, y3 + 13, 16, C.ink); }
   else { hudBar(X, y3, 1, rgba(C.spark, 0.8 + 0.2 * Math.sin(G.clock * 6)), C.spark); txt(isTouch ? '¡LISTA! toca INVENC.' : '¡LISTA! pulsa P', V, y3 + 13, 13, C.spark, 'left'); }
   txt('TIEMPO', 436, y1 + 13, 14, C.dim, 'left'); numText(fmtTime(G.time), 576, y1 + 13, 16, C.ink, 'right');
   txt('ROCES', 436, y2 + 13, 14, C.dim, 'left'); numText(G.combo + ' x' + comboMult().toFixed(1), 576, y2 + 13, 16, G.combo >= 15 ? C.spark : C.ink, 'right');
@@ -1616,6 +1623,7 @@ function drawBanner(){
     txt(name, 302, y + 2, size, rgba(C.neon, 0.6), 'center', FD);
     txt(name, 300, y, size, C.ink, 'center', FD);
     if (D.isNew) { ctx.font = size + 'px ' + FD; pill('NUEVO', 300 + ctx.measureText(name).width / 2 + 34, y - 7, C.hazard); }
+    if (D.wave % HEAL_EVERY === 0) txt('+' + HEAL_AMOUNT + ' PV AL ACABAR ESTA OLEADA', 300, y - 26, 13, C.heal);
     ctx.globalAlpha = 1;
   }
   const ha = D.phase !== 'attack' ? a : p0.keepHint ? 0.85 : clamp(1 - (D.t - 2.5) / 0.5, 0, 1);
@@ -1645,16 +1653,16 @@ function drawTitle(){
   const rows = G.menu === 'admin'
     ? [['H', 'abrir o cerrar el panel en partida'], ['1', 'velocidad extra (tú eliges cuánta)'], ['2', 'inmunidad infinita'], ['3', 'orbes que destruyen balas'], ['Ojo', 'en modo admin no se guarda el récord']]
     : hl
-      ? [['Vida', '10 PV y los golpes duelen un 50 % más'], ['Ataques', 'más rápidos, más densos y avisan menos'], ['Combos', 'dos ataques a la vez cada dos oleadas'], ['Sin curas', 'invencibilidad 15 s cada 60 s'], ['Premio', 'puntos x2 y récord propio']]
+      ? [['Vida', '10 PV · cada golpe quita 3'], ['Ataques', 'más rápidos, más densos y avisan menos'], ['Combos', 'dos ataques a la vez cada dos oleadas'], ['Curas', 'solo +7 PV automáticos cada 3 oleadas'], ['Premio', 'puntos x2 y récord propio']]
       : isTouch
-        ? [['Arrastra', 'mover la chispa'], ['Roza balas', 'llena la CARGA del PULSO'], ['INVENC.', 'invencible 15 s · recarga 30 s'], ['SALTO', 'saltar en modo gravedad']]
-        : [['WASD / ratón', 'mover (según el modo)'], ['Roza balas', 'suma puntos y llena la CARGA'], ['X', 'pulso que borra balas pequeñas'], ['P', 'invencibilidad 15 s · recarga 30 s'], ['Espacio / clic', 'saltar en modo gravedad']];
+        ? [['Arrastra', 'mover la chispa'], ['Roza balas', 'llena la CARGA del PULSO'], ['INVENC.', 'invencible 15 s · recarga 30 s'], ['Cada 3 oleadas', 'te curas 7 PV'], ['SALTO', 'saltar en modo gravedad']]
+        : [['WASD / ratón', 'mover (según el modo)'], ['Roza balas', 'suma puntos y llena la CARGA'], ['X', 'pulso que borra balas pequeñas'], ['P', 'invencibilidad 15 s · recarga 30 s'], ['Cada 3 oleadas', 'te curas 7 PV'], ['Espacio / clic', 'saltar en modo gravedad']];
   rows.forEach(([k, v], i) => { const yy = 614 + i * 23; txt(k, 288, yy, 15, hl ? C.hazard : C.spark, 'right'); txt(v, 300, yy, 15, C.ink, 'left', FB, 500); });
   ctx.globalAlpha = 0.7 + 0.3 * Math.sin(G.clock * 4);
-  txt(isTouch ? 'TOCA UN MODO PARA EMPEZAR' : 'ELIGE CON ↑ ↓ Y PULSA ENTER', 300, 746, 18, C.spark, 'center', FD);
+  txt(isTouch ? 'TOCA UN MODO PARA EMPEZAR' : 'ELIGE CON ↑ ↓ Y PULSA ENTER', 300, 756, 18, C.spark, 'center', FD);
   ctx.globalAlpha = 1;
   const recs = [best.score > 0 && 'Récord: ' + best.score + ' pts · oleada ' + best.wave, bestHC.score > 0 && 'Hardcore: ' + bestHC.score + ' pts · oleada ' + bestHC.wave].filter(Boolean);
-  if (recs.length) txt(recs.join('   ·   '), 300, 776, 13, C.dim);
+  if (recs.length) txt(recs.join('   ·   '), 300, 784, 13, C.dim);
 }
 function btn(r, label, hot){
   ctx.fillStyle = hot ? rgba(C.spark, 0.14) : '#1a1033'; roundRect(r.x, r.y, r.w, r.h, 10); ctx.fill();
@@ -1798,7 +1806,7 @@ function frame(now){
   document.body.classList.toggle('hidecursor', G.ctrl === 'mouse' && G.state === 'play' && !G.paused);
   if (isTouch) {
     bPulse.classList.toggle('ready', P.charge >= 100 && G.state === 'play');
-    bShield.classList.toggle('ready', P.shieldCd <= 0 && G.state === 'play');
+    bShield.classList.toggle('ready', P.shieldCd <= 0 && P.shieldT <= 0 && G.state === 'play');
     const lbl = P.shieldT > 0 ? 'ACTIVA' : P.shieldCd > 0 ? Math.ceil(P.shieldCd) + ' s' : 'INVENC.';
     if (bShield.textContent !== lbl) bShield.textContent = lbl;
   }

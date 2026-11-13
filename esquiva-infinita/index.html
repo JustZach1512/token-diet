@@ -97,8 +97,8 @@ const angTo = (ax, ay, bx, by) => Math.atan2(by - ay, bx - ax);
 const angDiff = (a, b) => { let d = (a - b) % TAU; if (d > Math.PI) d -= TAU; if (d < -Math.PI) d += TAU; return d; };
 function shuffle(a){ for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; }
 function rgba(hex, a){ const n = parseInt(hex.slice(1), 16); return `rgba(${n >> 16},${(n >> 8) & 255},${n & 255},${a})`; }
-const sp = d => Math.min(2.1, 1 + (d - 1) * 0.25);   // velocidad de los ataques
-const rt = d => Math.min(2.4, 1 + (d - 1) * 0.3);    // frecuencia de los ataques
+const sp = d => Math.min(G.hard ? 2.6 : 2.1, 1 + (d - 1) * 0.25);   // velocidad de los ataques
+const rt = d => Math.min(G.hard ? 3 : 2.4, 1 + (d - 1) * 0.3);    // frecuencia de los ataques
 const fmtTime = s => Math.floor(s / 60) + ':' + String(Math.floor(s % 60)).padStart(2, '0');
 
 const Store = {
@@ -106,10 +106,12 @@ const Store = {
   set(k, v){ try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
 };
 let best = Store.get('esquiva.best', { score: 0, wave: 0, time: 0 });
+let bestHC = Store.get('esquiva.best.hc', { score: 0, wave: 0, time: 0 });
 
 // ================= Sonido (WebAudio, todo sintetizado) =================
 const AudioSys = {
-  ac: null, master: null, sfx: null, mus: null, delay: null, noiseBuf: null, muted: Store.get('esquiva.muted', false), last: {},
+  ac: null, master: null, sfx: null, mus: null, musLP: null, bassBus: null, delay: null, verb: null, noiseBuf: null,
+  muted: Store.get('esquiva.muted', false), last: {}, drive: 0,
   init(){
     if (this.ac) { if (this.ac.state === 'suspended' && !G.paused) this.ac.resume().catch(() => {}); return; }
     try {
@@ -120,12 +122,21 @@ const AudioSys = {
       comp.connect(ac.destination);
       this.master = ac.createGain(); this.master.gain.value = this.muted ? 0 : 0.9; this.master.connect(comp);
       this.sfx = ac.createGain(); this.sfx.gain.value = 0.5; this.sfx.connect(this.master);
-      this.mus = ac.createGain(); this.mus.gain.value = 0.22; this.mus.connect(this.master);
-      // eco filtrado para la melodía
+      // música: bus → filtro que se cierra entre oleadas y se abre de golpe al empezar el ataque
+      this.musLP = ac.createBiquadFilter(); this.musLP.type = 'lowpass'; this.musLP.frequency.value = 20000; this.musLP.Q.value = 0.8;
+      this.musLP.connect(this.master);
+      this.mus = ac.createGain(); this.mus.gain.value = 0.22; this.mus.connect(this.musLP);
+      // bajo saturado (más sucio en hardcore)
+      this.bassBus = ac.createWaveShaper(); this.bassBus.oversample = '2x'; this.bassBus.connect(this.mus); this.setDrive(1.2);
+      // eco filtrado + reverb sintética
       this.delay = ac.createDelay(1); this.delay.delayTime.value = 0.35;
       const fb = ac.createGain(), dlp = ac.createBiquadFilter(), wet = ac.createGain();
-      fb.gain.value = 0.33; dlp.type = 'lowpass'; dlp.frequency.value = 1800; wet.gain.value = 0.45;
+      fb.gain.value = 0.33; dlp.type = 'lowpass'; dlp.frequency.value = 1800; wet.gain.value = 0.4;
       this.delay.connect(dlp); dlp.connect(fb); fb.connect(this.delay); dlp.connect(wet); wet.connect(this.mus);
+      const len = Math.floor(ac.sampleRate * 2.2), ir = ac.createBuffer(2, len, ac.sampleRate);
+      for (let c = 0; c < 2; c++) { const d = ir.getChannelData(c); for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 3); }
+      this.verb = ac.createConvolver(); this.verb.buffer = ir;
+      const vg = ac.createGain(); vg.gain.value = 0.3; this.verb.connect(vg); vg.connect(this.mus);
       const buf = ac.createBuffer(1, ac.sampleRate, ac.sampleRate), d = buf.getChannelData(0);
       for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
       this.noiseBuf = buf;
@@ -133,6 +144,19 @@ const AudioSys = {
     } catch (e) { this.ac = null; }
   },
   setMuted(m){ this.muted = m; Store.set('esquiva.muted', m); if (this.master) this.master.gain.setTargetAtTime(m ? 0 : 0.9, this.ac.currentTime, 0.02); },
+  setDrive(k){
+    if (!this.bassBus || this.drive === k) return;
+    this.drive = k;
+    const n = 1024, c = new Float32Array(n);
+    for (let i = 0; i < n; i++) { const x = i * 2 / (n - 1) - 1; c[i] = Math.tanh(k * x) / k; }
+    this.bassBus.curve = c;
+  },
+  musDuck(on, time = 1){
+    if (!this.ac) return;
+    const p = this.musLP.frequency, t = this.ac.currentTime;
+    p.cancelScheduledValues(t); p.setValueAtTime(Math.max(100, p.value), t);
+    p.exponentialRampToValueAtTime(on ? 650 : 20000, t + (on ? time : 0.06));
+  },
   tone(f, dur, o = {}){
     const ac = this.ac; if (!ac) return;
     const t = o.at != null ? o.at : ac.currentTime + (o.delay || 0);
@@ -150,9 +174,10 @@ const AudioSys = {
     src.buffer = this.noiseBuf; src.loop = true; f.type = o.ftype || 'lowpass'; f.frequency.setValueAtTime(o.freq || 3000, t);
     if (o.to) f.frequency.exponentialRampToValueAtTime(o.to, t + dur);
     g.gain.setValueAtTime(o.vol || 0.2, t); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-    src.connect(f); f.connect(g); g.connect(o.dest || this.sfx); src.start(t, Math.random() * 0.5); src.stop(t + dur + 0.02);
+    src.connect(f); f.connect(g); g.connect(o.dest || this.sfx); if (o.verb) g.connect(this.verb);
+    src.start(t, Math.random() * 0.5); src.stop(t + dur + 0.02);
   },
-  // Instrumento de la banda sonora: osciladores desafinados → filtro (con barrido opcional) → envolvente
+  // Voz de sintetizador: osciladores desafinados (con paneo) → filtro con barrido → envolvente → bus
   synth(f, dur, o){
     const ac = this.ac, t = o.at, lp = ac.createBiquadFilter(), g = ac.createGain(), att = o.att || 0.005;
     lp.type = 'lowpass'; lp.Q.value = o.q || 1;
@@ -161,15 +186,48 @@ const AudioSys = {
     g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(o.vol, t + att);
     if (o.hold) g.gain.setValueAtTime(o.vol, t + Math.max(att, dur - o.hold));
     g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-    for (const det of o.det || [0]) {
+    (o.det || [0]).forEach((det, i) => {
       const osc = ac.createOscillator(); osc.type = o.type || 'sawtooth'; osc.frequency.value = f; osc.detune.value = det;
-      osc.connect(lp); osc.start(t); osc.stop(t + dur + 0.03);
-    }
-    lp.connect(g); g.connect(this.mus); if (o.echo) g.connect(this.delay);
+      if (o.pan && ac.createStereoPanner) { const p = ac.createStereoPanner(); p.pan.value = o.pan[i % o.pan.length]; osc.connect(p); p.connect(lp); }
+      else osc.connect(lp);
+      osc.start(t); osc.stop(t + dur + 0.03);
+    });
+    lp.connect(g); g.connect(o.bus === 'bass' ? this.bassBus : this.mus);
+    if (o.echo) g.connect(this.delay);
+    if (o.verb) g.connect(this.verb);
+  },
+  // Melodía: dos sierras + octava cuadrada, vibrato que entra poco a poco, eco y reverb
+  lead(f, dur, t){
+    const ac = this.ac, lp = ac.createBiquadFilter(), g = ac.createGain(), lfo = ac.createOscillator(), lg = ac.createGain(), og = ac.createGain();
+    lp.type = 'lowpass'; lp.frequency.value = 2600; lp.Q.value = 2;
+    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.045, t + 0.015);
+    g.gain.setValueAtTime(0.045, t + Math.max(0.02, dur - 0.06)); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    lfo.frequency.value = 5.5; lg.gain.setValueAtTime(0, t); lg.gain.linearRampToValueAtTime(dur > 0.3 ? 16 : 4, t + Math.min(0.3, dur)); lfo.connect(lg);
+    og.gain.value = 0.25; og.connect(lp);
+    [[-7, 'sawtooth', 1, lp], [7, 'sawtooth', 1, lp], [0, 'square', 2, og]].forEach(([det, type, mul, out]) => {
+      const o = ac.createOscillator(); o.type = type; o.frequency.value = f * mul; o.detune.value = det;
+      lg.connect(o.detune); o.connect(out); o.start(t); o.stop(t + dur + 0.03);
+    });
+    lfo.start(t); lfo.stop(t + dur + 0.03);
+    lp.connect(g); g.connect(this.mus); g.connect(this.delay); g.connect(this.verb);
+  },
+  // Cuerdas en trémolo: capa de tensión (poca vida y hardcore)
+  trem(f, dur, t, vol){
+    const ac = this.ac, lp = ac.createBiquadFilter(), g = ac.createGain(), am = ac.createGain(), lfo = ac.createOscillator(), lg = ac.createGain();
+    lp.type = 'lowpass'; lp.frequency.value = 3000;
+    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(vol, t + 0.4);
+    g.gain.setValueAtTime(vol, t + Math.max(0.45, dur - 0.2)); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    am.gain.value = 0.5; lfo.frequency.value = 11; lg.gain.value = 0.5; lfo.connect(lg); lg.connect(am.gain);
+    for (const det of [-5, 5]) { const o = ac.createOscillator(); o.type = 'sawtooth'; o.frequency.value = f; o.detune.value = det; o.connect(lp); o.start(t); o.stop(t + dur + 0.05); }
+    lfo.start(t); lfo.stop(t + dur + 0.05);
+    lp.connect(am); am.connect(g); g.connect(this.mus); g.connect(this.verb);
   },
   kick(t, v = 1){ this.tone(150, 0.17, { type: 'sine', vol: 0.75 * v, to: 40, at: t, dest: this.mus }); this.noise(0.02, { vol: 0.1 * v, freq: 3500, at: t, dest: this.mus }); },
-  hat(t, v){ this.noise(0.035, { vol: v, freq: 7500, ftype: 'highpass', at: t, dest: this.mus }); },
-  snare(t, v = 1){ this.noise(0.15, { vol: 0.24 * v, freq: 1900, ftype: 'bandpass', at: t, dest: this.mus }); this.tone(190, 0.09, { type: 'triangle', vol: 0.12 * v, to: 140, at: t, dest: this.mus }); },
+  hat(t, v, open){ this.noise(open ? 0.18 : 0.035, { vol: v, freq: 7500, ftype: 'highpass', at: t, dest: this.mus }); },
+  snare(t, v = 1){ this.noise(0.15, { vol: 0.24 * v, freq: 1900, ftype: 'bandpass', at: t, dest: this.mus, verb: v > 0.9 }); this.tone(190, 0.09, { type: 'triangle', vol: 0.12 * v, to: 140, at: t, dest: this.mus }); },
+  crash(t, v = 1){ this.noise(1.4, { vol: 0.08 * v, freq: 5500, ftype: 'highpass', at: t, dest: this.mus, verb: true }); },
+  crashNow(){ if (this.ac && !this.muted) this.crash(this.ac.currentTime, 1.2); },
+  tom(t, f0){ this.tone(f0, 0.2, { type: 'sine', vol: 0.35, to: f0 * 0.55, at: t, dest: this.mus }); },
   riser(d){   // subida de ruido antes de cada oleada
     if (!this.ac || this.muted) return;
     const ac = this.ac, t = ac.currentTime, src = ac.createBufferSource(), bp = ac.createBiquadFilter(), g = ac.createGain();
@@ -201,22 +259,34 @@ const AudioSys = {
       case 'shield': [12, 16, 19, 24, 28].forEach((s, i) => this.tone(n(s), 0.16, { type: 'triangle', vol: 0.1, delay: i * 0.035 })); this.noise(0.4, { vol: 0.12, freq: 800, to: 7000, ftype: 'bandpass' }); break;
       case 'shieldEnd': this.tone(n(19), 0.18, { type: 'triangle', vol: 0.08, to: n(7) }); break;
       case 'shieldReady': this.tone(n(19), 0.1, { type: 'sine', vol: 0.09 }); this.tone(n(24), 0.16, { type: 'sine', vol: 0.09, delay: 0.1 }); break;
+      case 'tick': this.tone(1760, 0.05, { type: 'sine', vol: 0.07 }); break;
       case 'orb': this.tone(1200 + Math.random() * 200, 0.04, { type: 'triangle', vol: 0.03, to: 1800 }); break;
       case 'jump': this.tone(300, 0.1, { vol: 0.05, to: 620 }); break;
-      case 'death': this.noise(0.9, { vol: 0.35, freq: 2500, to: 100 }); [0, -3, -7, -12].forEach((s, i) => this.tone(n(s - 5), 0.22, { vol: 0.1, delay: i * 0.14 })); break;
+      case 'death':
+        this.noise(0.9, { vol: 0.35, freq: 2500, to: 100 });
+        [0, -3, -7, -12].forEach((s, i) => this.tone(n(s - 5), 0.22, { vol: 0.1, delay: i * 0.14 }));
+        [-24, -23, -17].forEach(m => this.synth(n(m), 2.6, { at: this.ac.currentTime + 0.1, vol: 0.05, cut: 900, att: 0.05, det: [-12, 12], verb: true }));
+        break;
       case 'blip': this.tone(680 + Math.random() * 120, 0.03, { vol: 0.022 }); break;
       case 'select': this.tone(660, 0.07, { vol: 0.07 }); this.tone(990, 0.09, { vol: 0.07, delay: 0.07 }); break;
     }
   }
 };
 
-// Banda sonora original en La menor armónica (8 compases): Lam Lam Fa Mi | Rem Si♭ Lam Mi.
-// El Mi mayor y el Si♭ napolitano dan la tensión; bajo al galope, latidos y melodía con eco.
-// Capas: 0 = menú (pad + latido) · 1 = bajo y charles · 2 = galope, bombo, caja y arpegio · 3 = melodía y redobles.
+// Banda sonora original, 16 compases en La menor armónica:
+//   A  Lam  Lam  Fa   Mi   · estrofa al galope
+//   B  Rem  Si♭  Lam  Mi   · Si♭ napolitano, sube la tensión y acaba en redoble
+//   C  Fa   Mi   Rem  Mi   · medio tiempo, bajo que respira, melodía alta
+//   D  Lam  Si♭  Sol#° Mi  · clímax: semicorcheas, arpegio disminuido y redoble
+// Capas: 0 menú (pad, dron, campanas, latido) · 1 bajo y charles · 2 batería completa,
+// sub-bajo y arpegios · 3 melodía con vibrato y redobles · 4 hardcore (bajo saturado,
+// semicorcheas siempre, toms y cuerdas en trémolo). Con poca vida entra un latido extra.
 const Music = {
   on: false, step: 0, next: 0, bpm: 128, level: 0, danger: false,
   PROG: [[-24, [0, 3, 7]], [-24, [0, 3, 7]], [-28, [-4, 0, 3]], [-29, [-5, -1, 2]],
-         [-31, [-7, -4, 0]], [-23, [-11, -7, -4]], [-24, [0, 3, 7]], [-29, [-5, -1, 2]]],
+         [-31, [-7, -4, 0]], [-23, [-11, -7, -4]], [-24, [0, 3, 7]], [-29, [-5, -1, 2]],
+         [-28, [-4, 0, 3]], [-29, [-5, -1, 2]], [-31, [-7, -4, 0]], [-29, [-5, -1, 2]],
+         [-24, [0, 3, 7]], [-23, [-11, -7, -4]], [-25, [-1, 2, 5]], [-29, [-5, -1, 2]]],
   LEAD: [[0, 7, 4], [4, 5, 2], [6, 3, 2], [8, 2, 2], [10, 3, 4], [14, 0, 2],
          [16, 0, 2], [18, 3, 2], [20, 7, 2], [22, 8, 2], [24, 7, 4], [28, 3, 4],
          [32, 8, 4], [36, 7, 2], [38, 3, 2], [40, 0, 4], [44, 3, 2], [46, 5, 2],
@@ -224,36 +294,75 @@ const Music = {
          [64, 5, 4], [68, 8, 2], [70, 12, 2], [72, 10, 2], [74, 8, 2], [76, 7, 2], [78, 5, 2],
          [80, 5, 4], [84, 8, 4], [88, 1, 2], [90, 5, 2], [92, 8, 4],
          [96, 7, 4], [100, 3, 2], [102, 0, 2], [104, 3, 4], [108, 7, 4],
-         [112, -1, 2], [114, 2, 2], [116, 5, 2], [118, 7, 2], [120, 8, 2], [122, 7, 2], [124, 5, 2], [126, 2, 2]],
-  start(level){ const ac = AudioSys.ac; if (!ac) return; this.level = level; this.on = true; this.step = 0; this.next = ac.currentTime + 0.08; },
+         [112, -1, 2], [114, 2, 2], [116, 5, 2], [118, 7, 2], [120, 8, 2], [122, 7, 2], [124, 5, 2], [126, 2, 2],
+         [128, 12, 6], [134, 10, 2], [136, 8, 4], [140, 12, 4],
+         [144, 11, 6], [150, 7, 2], [152, 14, 4], [156, 11, 4],
+         [160, 8, 6], [166, 5, 2], [168, 12, 4], [172, 10, 4],
+         [176, 11, 4], [180, 14, 4], [184, 17, 4], [188, 14, 2], [190, 11, 2],
+         [192, 12, 4], [196, 15, 2], [198, 14, 2], [200, 12, 2], [202, 11, 2], [204, 12, 4],
+         [208, 13, 4], [212, 17, 4], [216, 20, 4], [220, 17, 4],
+         [224, 11, 2], [226, 14, 2], [228, 17, 2], [230, 20, 2], [232, 17, 2], [234, 14, 2], [236, 11, 2], [238, 8, 2],
+         [240, 7, 8], [248, 11, 2], [250, 14, 2], [252, 15, 2], [254, 11, 2]],
+  start(level){
+    const ac = AudioSys.ac; if (!ac) return;
+    this.level = level; this.on = true; this.step = 0; this.next = ac.currentTime + 0.08;
+    AudioSys.setDrive(level >= 4 ? 3 : 1.2);
+  },
   stop(){ this.on = false; },
   tick(){
     const ac = AudioSys.ac; if (!this.on || !ac || ac.state !== 'running') return;
     const s16 = 60 / this.bpm / 4;
     if (this.next < ac.currentTime - 0.25) this.next = ac.currentTime + 0.02;
-    while (this.next < ac.currentTime + 0.12) { this.note(this.step, this.next, s16); this.next += s16; this.step = (this.step + 1) % 128; }
+    while (this.next < ac.currentTime + 0.12) { this.note(this.step, this.next, s16); this.next += s16; this.step = (this.step + 1) % 256; }
   },
   note(s, t, s16){
-    const A = AudioSys, f = n => 440 * Math.pow(2, n / 12), bar = s >> 4, b = s & 15, [root, ch] = this.PROG[bar], L = this.level, dz = this.danger;
-    if (b === 0) {
+    const A = AudioSys, f = n => 440 * Math.pow(2, n / 12);
+    const bar = s >> 4, b = s & 15, sec = bar >> 2, [root, ch] = this.PROG[bar];
+    const L = this.level, hard = L >= 4, dz = this.danger, Lc = Math.min(L, 3);
+    if (b === 0) {   // inicio de compás
       A.delay.delayTime.setValueAtTime(s16 * 3, t);
-      for (const n of ch) A.synth(f(n - 12), s16 * 16, { at: t, vol: 0.02, cut: 700 + L * 250, att: 0.3, hold: 0.25, det: [-9, 9] });
+      for (const n of ch) A.synth(f(n - 12), s16 * 16, { at: t, vol: 0.017, cut: 650 + Lc * 260, att: 0.35, hold: 0.3, det: [-10, 10], pan: [-0.6, 0.6], verb: true });
+      if (L === 0) {
+        A.synth(f(root - 12), s16 * 16, { at: t, vol: 0.14, cut: 220, type: 'sine', att: 0.5, hold: 0.4 });
+        if (bar % 2 === 0) A.synth(f(ch[2] + 12), s16 * 12, { at: t, vol: 0.028, cut: 4000, type: 'sine', verb: true, echo: true });
+      }
+      if (L >= 2 && bar % 4 === 0 && sec !== 1) A.crash(t, sec === 0 ? 1 : 0.7);
+      if (dz || hard) A.trem(f(ch[2] + 12), s16 * 16, t, hard ? 0.016 : 0.012);
     }
-    if (L >= 1 && (L >= 2 ? b % 4 !== 1 : b % 2 === 0))
-      A.synth(f(root + (L >= 2 && b % 4 === 3 ? 12 : 0)), s16 * 0.95, { at: t, vol: 0.3, cut: 260 + L * 160 + (dz ? 400 : 0), sweep: 3, q: 7 });
-    if (L >= 2) { const seq = [ch[0], ch[1], ch[2], ch[0] + 12, ch[1] + 12, ch[2] + 12]; A.synth(f(seq[s % 6]), 0.08, { at: t, vol: 0.022, cut: 3200, type: 'square' }); }
-    if (L >= 2 ? b % 4 === 0 : b === 0 || b === 3 || b === 8 || b === 11) A.kick(t, L === 0 ? 0.55 : b % 4 ? 0.6 : 1);
-    if (dz && (b === 6 || b === 14)) A.kick(t, 0.5);   // latido extra con poca vida
-    if (L >= 1) A.hat(t, b % 4 === 2 ? 0.08 : 0.03);
-    if (L >= 2 && (b === 4 || b === 12)) A.snare(t);
-    if (L >= 3 && bar === 7 && b >= 12) A.snare(t, 0.4 + (b - 12) * 0.15);
-    if (L >= 3) for (const [ms, n, len] of this.LEAD) if (ms === s) A.synth(f(n), s16 * len * 0.95, { at: t, vol: 0.045, cut: 2600, att: 0.015, hold: 0.06, det: [-7, 7], echo: true });
+    if (L >= 1) {   // bajo
+      let on, oct = 0;
+      if (L === 1) on = b % 2 === 0;
+      else if (sec === 2 && !hard) on = b === 0 || b === 8 || b === 14 || b === 15;
+      else if (sec === 3 || hard) { on = true; oct = b % 2 ? 12 : 0; }
+      else { on = b % 4 !== 1; oct = b % 4 === 3 ? 12 : 0; }
+      if (on) {
+        const long = L >= 2 && sec === 2 && !hard && (b === 0 || b === 8), d = long ? s16 * 6 : s16 * 0.95;
+        A.synth(f(root + oct), d, { at: t, vol: 0.27, cut: 240 + Lc * 150 + (dz ? 350 : 0) + (hard ? 250 : 0), sweep: 3, q: 7, bus: 'bass' });
+        if (L >= 2 && oct === 0 && b % 4 === 0) A.synth(f(root - 12), s16 * 3, { at: t, vol: 0.3, cut: 300, type: 'sine', bus: 'bass' });
+      }
+    }
+    if (L >= 2) {   // arpegios
+      const seq = [ch[0], ch[1], ch[2], ch[0] + 12, ch[1] + 12, ch[2] + 12];
+      if (sec === 2 && !hard) { if (b % 2 === 0) A.synth(f(seq[(b >> 1) % 3]), 0.16, { at: t, vol: 0.026, cut: 2400, type: 'triangle', verb: true }); }
+      else A.synth(f(seq[(sec === 3 ? b : s) % 6]), 0.08, { at: t, vol: 0.02, cut: 3200, type: 'square', pan: [((b % 4) - 1.5) * 0.3] });
+    }
+    if (L <= 1) { if (b === 0 || b === 3 || b === 8 || b === 11) A.kick(t, L === 0 ? 0.5 : b % 4 ? 0.6 : 1); }   // latido
+    else if (sec === 2 && !hard) { if (b === 0 || b === 10) A.kick(t); if (b === 8) A.snare(t, 1.1); }          // medio tiempo
+    else {
+      if (b % 4 === 0 || (sec === 1 && b === 10) || (hard && (b === 7 || b === 14))) A.kick(t);
+      if (b === 4 || b === 12) A.snare(t);
+    }
+    if (dz && (b === 6 || b === 14)) A.kick(t, 0.5);
+    if (L >= 1) A.hat(t, b % 4 === 2 ? 0.07 : hard ? 0.045 : 0.028, L >= 2 && b === 14 && sec !== 2);
+    if (L >= 3 && (bar === 7 || bar === 15) && b >= 8) A.snare(t, 0.3 + (b - 8) * 0.1);
+    if (hard && bar % 4 === 3 && b >= 12) A.tom(t, 220 - (b - 12) * 35);
+    if (L >= 3) for (const [ms, n, len] of this.LEAD) if (ms === s) A.lead(f(n), s16 * len * 0.95, t);
   }
 };
 
 // ================= Entrada: teclado, ratón y táctil =================
 const KEYMAP = { ArrowLeft: 'left', a: 'left', ArrowRight: 'right', d: 'right', ArrowUp: 'up', w: 'up', ArrowDown: 'down', s: 'down',
-  Shift: 'focus', z: 'confirm', Enter: 'confirm', ' ': 'confirm', x: 'pulse', c: 'pulse', i: 'shield', Escape: 'pause', p: 'pause',
+  Shift: 'focus', z: 'confirm', Enter: 'confirm', ' ': 'confirm', x: 'pulse', c: 'pulse', p: 'shield', Escape: 'pause',
   m: 'mute', h: 'admin', q: 'quit', '1': 'ad1', '2': 'ad2', '3': 'ad3' };
 const keys = {}, hit = {};
 const keyName = e => KEYMAP[e.key && e.key.length === 1 ? e.key.toLowerCase() : e.key];
@@ -402,11 +511,12 @@ function updatePlayer(dt){
 }
 
 const comboMult = () => 1 + Math.min(3, Math.floor(G.combo / 15) * 0.5);
+const scoreMul = () => G.hard ? 2 : 1;   // hardcore puntúa doble
 
 function hurt(base){
   if (P.inv > 0 || P.shieldT > 0 || G.god || (G.admin && ADM.immune) || !P.alive) return;
-  const dmg = Math.round(base + Math.max(0, D.diff - 1) * 0.6);
-  P.hp = Math.max(0, P.hp - dmg); P.inv = 1.1; G.combo = 0; D.noHit = false;
+  const dmg = Math.round(base * (G.hard ? 1.5 : 1) + Math.max(0, D.diff - 1) * 0.6);
+  P.hp = Math.max(0, P.hp - dmg); P.inv = G.hard ? 0.8 : 1.1; G.combo = 0; D.noHit = false;
   G.shake = RM ? 2 : 9; G.flash = RM ? 0.06 : 0.28; A.flash = 0.4;
   burst(P.x, P.y, C.hazard, 14, 160, 0.5, 3);
   popup(P.x, P.y - 18, '-' + dmg, C.hazard);
@@ -418,14 +528,16 @@ function die(){
   burst(P.x, P.y, C.spark, 44, 260, 1.1, 3.5);
   AudioSys.play('death'); Music.stop(); Boss.mood('laugh', 3);
   G.overLine = pick(OVER_LINES);
-  G.newBest = !G.admin && G.score > best.score;
-  if (G.newBest) { best = { score: Math.floor(G.score), wave: D.wave, time: Math.floor(G.time) }; Store.set('esquiva.best', best); }
+  const rec = { score: Math.floor(G.score), wave: D.wave, time: Math.floor(G.time) };
+  G.newBest = !G.admin && G.score > (G.hard ? bestHC : best).score;
+  if (G.newBest) { if (G.hard) { bestHC = rec; Store.set('esquiva.best.hc', rec); } else { best = rec; Store.set('esquiva.best', rec); } }
+  AudioSys.musDuck(false);
 }
 function graze(b){
   const small = b.shape === 'circle' && b.r < 10;
   b.grazeCd = small ? 99 : 0.22;
   G.combo++; G.grazes++;
-  G.score += (small ? 5 : 3) * comboMult();
+  G.score += (small ? 5 : 3) * comboMult() * scoreMul();
   if (P.charge < 100) {
     P.charge = Math.min(100, P.charge + (small ? 4 : 2.5));
     if (P.charge >= 100) { AudioSys.play('ready'); popup(P.x, P.y - 22, '¡PULSO LISTO!', C.neon); }
@@ -442,6 +554,7 @@ function spawn(o){
     color: C.ink, kind: null, dmg: 3, t: 0, warn: 0, life: 30, grazeCd: 0, dead: false, safe: false,
     update: null, draw: null, over: null, keep: false }, o);
   if (b.destructible === undefined) b.destructible = b.shape === 'circle' && b.r <= 9;
+  if (G.hard && b.warn > 0) b.warn *= 0.75;   // hardcore: avisos más cortos
   bullets.push(b); return b;
 }
 function move(b, dt){ b.vx += b.ax * dt; b.vy += b.ay * dt; b.x += b.vx * dt; b.y += b.vy * dt; }
@@ -616,16 +729,20 @@ function drawPulses(){
 }
 
 // ================= Invencibilidad (tecla I) =================
-const SHIELD_DUR = 3, SHIELD_CD = 30;
+const SHIELD_DUR = 15, shieldCdMax = () => G.hard ? 60 : 30;
 function useShield(){
   if (!P.alive) return;
   if (P.shieldCd > 0) { popup(P.x, P.y - 22, 'Recargando: ' + Math.ceil(P.shieldCd) + ' s', C.dim); return; }
-  P.shieldT = SHIELD_DUR; P.shieldCd = SHIELD_CD;
-  AudioSys.play('shield'); popup(P.x, P.y - 22, '¡INVENCIBLE!', C.spark); burst(P.x, P.y, C.spark, 18, 150, 0.5, 2.5);
+  P.shieldT = SHIELD_DUR; P.shieldCd = shieldCdMax();
+  AudioSys.play('shield'); popup(P.x, P.y - 22, '¡INVENCIBLE ' + SHIELD_DUR + ' s!', C.spark); burst(P.x, P.y, C.spark, 18, 150, 0.5, 2.5);
   Boss.mood('surprised', 0.8);
 }
 function updateShield(dt){
-  if (P.shieldT > 0 && (P.shieldT -= dt) <= 0) AudioSys.play('shieldEnd');
+  if (P.shieldT > 0) {
+    const before = Math.ceil(P.shieldT);
+    if ((P.shieldT -= dt) <= 0) AudioSys.play('shieldEnd');
+    else if (before <= 3 && Math.ceil(P.shieldT) < before) AudioSys.play('tick');   // aviso: quedan 3, 2, 1 s
+  }
   if (P.shieldCd > 0 && (P.shieldCd -= dt) <= 0) { AudioSys.play('shieldReady'); popup(P.x, P.y - 22, 'INVENCIBILIDAD LISTA', C.spark); }
 }
 
@@ -1113,53 +1230,57 @@ def({ id: 'singularidad', name: 'SINGULARIDAD', minWave: 9, box: [340, 340], dur
 const LINES = ['¿Aún sigues ahí?', 'Esta la diseñé pensando en ti.', 'Más rápido. Más denso. Más bonito.', 'Nadie dura para siempre.',
   'Me gusta cómo esquivas.', 'Veamos cuánto aguantas.', 'Ni yo sé qué viene ahora.', 'No es nada personal. Es geometría.',
   'Respira. Yo no lo necesito.', 'Cada oleada, un plano nuevo.'];
+const HC_LINES = ['Dos golpes. Es todo lo que aguantas.', 'Más rápido. Siempre más rápido.', 'Los avisos largos son para otros modos.',
+  '¿Todavía brillas, chispa?', 'Ni una cura. Ni una.', 'Esto ya no es un juego. Bueno, sí.'];
 const COMBO_LINES = ['Dos planos a la vez. ¿Sabrás leerlos?', 'Mezclemos ideas.', 'Esto ya es arquitectura avanzada.'];
 const OVER_LINES = ['Buen intento. Ya estoy diseñando la siguiente.', 'La caja te echará de menos.', 'Otra vez. Sé que quieres.', 'Tomo nota de tus errores. De todos.'];
 
 const G = { state: 'title', paused: false, score: 0, time: 0, grazes: 0, combo: 0, shake: 0, flash: 0, clock: 0,
-  deadT: 0, overT: 0, god: false, newBest: false, overLine: '', admin: false, ctrl: 'keys', menu: 'main', sel: 0 };
+  deadT: 0, overT: 0, god: false, newBest: false, overLine: '', admin: false, ctrl: 'keys', hard: false, menu: 'main', sel: 0 };
 const D = { wave: 0, phase: 'idle', t: 0, picks: [], runs: [], bag: [], seen: new Set(), diff: 1, noHit: true,
   dur: 9, transDur: 1.5, isNew: false, combo: false, healAt: -1, last: null };
 
 function clearField(){ bullets.length = particles.length = popups.length = pickups.length = pulses.length = shots.length = 0; }
-function startRun(admin = G.admin, ctrl = G.ctrl){
-  G.admin = admin; G.ctrl = ctrl; ADM.open = false; adEl.hidden = true;
+function startRun(admin = G.admin, ctrl = G.ctrl, hard = G.hard){
+  G.admin = admin; G.ctrl = ctrl; G.hard = hard && !admin;
+  const hp = G.hard ? 10 : 20; ADM.open = false; adEl.hidden = true;
   clearField();
-  Object.assign(P, { x: 300, y: 470, hp: 20, maxHp: 20, trail: 20, inv: 0, charge: 0, mode: 'free', vy: 0, ground: false, alive: true, stillT: 1, extX: 0, extY: 0, shieldT: 0, shieldCd: 0 });
+  Object.assign(P, { x: 300, y: 470, hp, maxHp: hp, trail: hp, inv: 0, charge: 0, mode: 'free', vy: 0, ground: false, alive: true, stillT: 1, extX: 0, extY: 0, shieldT: 0, shieldCd: 0 });
   Object.assign(G, { state: 'play', paused: false, score: 0, time: 0, grazes: 0, combo: 0, deadT: 0, newBest: false });
   Object.assign(D, { wave: 0, phase: 'idle', t: 0, picks: [], runs: [], bag: [], seen: new Set(), last: null });
   arena.set(260, 260);
   touch.id = touch.extra = null; touch.tx = touch.ty = null;
-  Boss.text = ''; Music.start(1); AudioSys.play('select');
+  Boss.text = ''; Music.start(G.hard ? 4 : 1); AudioSys.play('select');
   nextWave();
 }
 function chooseWave(){
-  const elig = PATTERNS.filter(p => p.minWave <= D.wave);
-  const comboWave = D.wave >= 10 && ((D.wave - 10) % 4 === 0 || (D.wave > 24 && D.wave % 3 === 0));
+  const elig = G.hard ? PATTERNS : PATTERNS.filter(p => p.minWave <= D.wave);
+  const comboWave = G.hard ? D.wave >= 3 && D.wave % 2 === 1 : D.wave >= 10 && ((D.wave - 10) % 4 === 0 || (D.wave > 24 && D.wave % 3 === 0));
   if (comboWave) {
-    const pool = elig.filter(p => p.combo && D.seen.has(p.id));
+    const pool = elig.filter(p => p.combo && (G.hard || D.seen.has(p.id)));
     if (pool.length >= 2) { const a = pick(pool); let b; do b = pick(pool); while (b === a); return [a, b]; }
   }
   const fresh = elig.filter(p => !D.seen.has(p.id));
-  if (fresh.length && (D.wave <= 3 || Math.random() < 0.85)) return [fresh[0]];
+  if (!G.hard && fresh.length && (D.wave <= 3 || Math.random() < 0.85)) return [fresh[0]];
   if (!D.bag.length) D.bag = shuffle(elig.slice());
   let p = D.bag.pop();
   if (p === D.last && D.bag.length) { const q = D.bag.pop(); D.bag.unshift(p); p = q; }
   return [p];
 }
 function nextWave(){
-  D.wave++; D.diff = 1 + (D.wave - 1) * 0.11; D.noHit = true; D.t = 0; D.phase = 'trans';
+  D.wave++; D.diff = G.hard ? 2 + (D.wave - 1) * 0.18 : 1 + (D.wave - 1) * 0.11; D.noHit = true; D.t = 0; D.phase = 'trans';
   const picks = D.picks = chooseWave();
   D.last = picks[0]; D.combo = picks.length > 1;
   D.isNew = picks.some(p => !D.seen.has(p.id));
   picks.forEach(p => D.seen.add(p.id));
   arena.set(Math.max(...picks.map(p => p.box[0])), Math.max(...picks.map(p => p.box[1])));
   P.mode = picks.some(p => p.mode === 'gravity') ? 'gravity' : 'free'; P.vy = 0;
-  D.transDur = D.wave === 1 ? 2.0 : 1.5;
-  Music.level = D.wave >= 6 ? 3 : D.wave >= 3 ? 2 : 1;
-  Music.bpm = 128 + Math.min(28, D.wave * 1.2);
-  AudioSys.riser(D.transDur);
-  if (D.combo) Boss.say(pick(COMBO_LINES));
+  D.transDur = G.hard ? (D.wave === 1 ? 1.6 : 1.0) : D.wave === 1 ? 2.0 : 1.5;
+  Music.level = G.hard ? 4 : D.wave >= 6 ? 3 : D.wave >= 3 ? 2 : 1;
+  Music.bpm = G.hard ? 150 + Math.min(22, D.wave * 1.5) : 128 + Math.min(28, D.wave * 1.2);
+  AudioSys.riser(D.transDur); AudioSys.musDuck(true, D.transDur * 0.8);
+  if (G.hard) { if (D.wave === 1) Boss.say('Modo hardcore. Aquí no hay curas ni segundas oportunidades.'); else if (Math.random() < 0.45) Boss.say(pick(HC_LINES)); }
+  else if (D.combo) Boss.say(pick(COMBO_LINES));
   else if (D.isNew) Boss.say(picks[0].line);
   else if (Math.random() < 0.4) Boss.say(pick(LINES));
   bJump.style.visibility = P.mode === 'gravity' ? 'visible' : 'hidden';
@@ -1167,23 +1288,23 @@ function nextWave(){
 function beginAttack(){
   D.phase = 'attack'; D.t = 0;
   D.runs = D.picks.map(p => {
-    const S = { m: D.combo ? 0.62 : 1 }, d = Math.max(1, D.diff - (D.combo ? 0.5 : D.isNew ? 0.6 : 0));
+    const S = { m: D.combo ? (G.hard ? 0.8 : 0.62) : 1 }, d = G.hard ? D.diff : Math.max(1, D.diff - (D.combo ? 0.5 : D.isNew ? 0.6 : 0));
     p.init(S, d); return { p, S, d };
   });
   D.dur = Math.max(...D.picks.map(p => p.dur));
-  const chance = P.hp <= P.maxHp * 0.6 ? 0.7 : P.hp < P.maxHp ? 0.25 : 0;
+  const chance = G.hard ? 0 : P.hp <= P.maxHp * 0.6 ? 0.7 : P.hp < P.maxHp ? 0.25 : 0;
   D.healAt = Math.random() < chance ? rand(2, D.dur - 3) : -1;
-  Boss.cast = 1; AudioSys.play('impact');
+  Boss.cast = 1; AudioSys.play('impact'); AudioSys.musDuck(false); AudioSys.crashNow();
 }
 function endAttack(){
   D.phase = 'clear'; D.t = 0; D.runs = [];
   let n = 0;
   for (const b of bullets) if (n++ < 90) burst(b.x, b.y, b.color, 2, 60, 0.35, 2);
   bullets.length = pickups.length = 0;
-  const bonus = 100 * D.wave;
+  const bonus = 100 * D.wave * scoreMul();
   if (D.noHit) {
     G.score += bonus * 1.5;
-    const healed = P.hp < P.maxHp; if (healed) P.hp++;
+    const healed = !G.hard && P.hp < P.maxHp; if (healed) P.hp++;
     popup(300, A.y, '¡IMPECABLE!', C.spark, true);
     popup(300, A.y + 26, '+' + Math.round(bonus * 1.5) + ' pts' + (healed ? ' · +1 PV' : ''), C.ink);
     AudioSys.play('perfect');
@@ -1220,7 +1341,8 @@ const Boss = {
   draw(){
     const x = this.x + (this.flinch > 0 ? Math.sin(this.t * 70) * 5 * this.flinch : 0), y = this.y + Math.sin(this.t * 1.3) * 6;
     const g = ctx.createRadialGradient(x, y, 10, x, y, 140);
-    g.addColorStop(0, 'rgba(180,140,255,0.22)'); g.addColorStop(1, 'rgba(180,140,255,0)');
+    const hc = hardLook() ? '255,79,139' : '180,140,255';
+    g.addColorStop(0, `rgba(${hc},0.24)`); g.addColorStop(1, `rgba(${hc},0)`);
     ctx.fillStyle = g; ctx.fillRect(x - 140, y - 140, 280, 280);
     const rot = this.t * (0.4 + this.cast * 2.2);
     const shard = (i, front) => {
@@ -1270,10 +1392,11 @@ const Boss = {
 // ================= Escena e interfaz =================
 const bPulse = document.getElementById('bPulse'), bJump = document.getElementById('bJump'), bShield = document.getElementById('bShield');
 const stars = Array.from({ length: 70 }, () => ({ x: Math.random() * W, y: Math.random() * H, z: rand(0.2, 1), tw: Math.random() * TAU }));
-let bgGrad = null;
+let bgGrad = null, bgHard = null;
 function drawBG(){
-  if (!bgGrad) { bgGrad = ctx.createLinearGradient(0, 0, 0, H); bgGrad.addColorStop(0, '#160b2e'); bgGrad.addColorStop(0.55, '#0b0716'); bgGrad.addColorStop(1, '#06030d'); }
-  ctx.fillStyle = bgGrad; ctx.fillRect(0, 0, W, H);
+  if (!bgGrad) { bgGrad = ctx.createLinearGradient(0, 0, 0, H); bgGrad.addColorStop(0, '#160b2e'); bgGrad.addColorStop(0.55, '#0b0716'); bgGrad.addColorStop(1, '#06030d');
+    bgHard = ctx.createLinearGradient(0, 0, 0, H); bgHard.addColorStop(0, '#300a1c'); bgHard.addColorStop(0.55, '#14060d'); bgHard.addColorStop(1, '#090306'); }
+  ctx.fillStyle = hardLook() ? bgHard : bgGrad; ctx.fillRect(0, 0, W, H);
   for (const s of stars) {
     ctx.fillStyle = `rgba(200,190,255,${((0.2 + 0.3 * (Math.sin(G.clock * 2 + s.tw) * 0.5 + 0.5)) * s.z).toFixed(3)})`;
     ctx.fillRect(s.x, (s.y + G.clock * s.z * 10) % H, s.z * 2, s.z * 2);
@@ -1282,15 +1405,15 @@ function drawBG(){
 function clipArena(){ ctx.beginPath(); ctx.rect(A.l + 1.5, A.t + 1.5, A.w - 3, A.h - 3); ctx.clip(); }
 function drawArena(){
   ctx.fillStyle = 'rgba(9,5,22,0.92)'; ctx.fillRect(A.l, A.t, A.w, A.h);
-  ctx.save(); clipArena(); ctx.strokeStyle = 'rgba(110,243,255,0.05)'; ctx.lineWidth = 1; ctx.beginPath();
+  ctx.save(); clipArena(); ctx.strokeStyle = hardLook() ? 'rgba(255,79,139,0.07)' : 'rgba(110,243,255,0.05)'; ctx.lineWidth = 1; ctx.beginPath();
   for (let x = A.x % 24; x < W; x += 24) if (x > A.l && x < A.r) { ctx.moveTo(x, A.t); ctx.lineTo(x, A.b); }
   for (let y = A.y % 24; y < H; y += 24) if (y > A.t && y < A.b) { ctx.moveTo(A.l, y); ctx.lineTo(A.r, y); }
   ctx.stroke(); ctx.restore();
 }
 function drawBorder(){
-  const grav = P.mode === 'gravity', col = A.flash > 0 ? C.hazard : grav ? C.grav : C.neon;
+  const grav = P.mode === 'gravity', hl = hardLook(), col = A.flash > 0 ? C.hazard : grav ? C.grav : hl ? C.hazard : C.neon;
   ctx.lineWidth = 8; ctx.strokeStyle = rgba(col, 0.16); ctx.strokeRect(A.l - 1, A.t - 1, A.w + 2, A.h + 2);
-  ctx.lineWidth = 3; ctx.strokeStyle = A.flash > 0 ? C.hazard : grav ? '#ecdcff' : '#d9fbff'; ctx.strokeRect(A.l, A.t, A.w, A.h);
+  ctx.lineWidth = 3; ctx.strokeStyle = A.flash > 0 ? C.hazard : grav ? '#ecdcff' : hl ? '#ffd0de' : '#d9fbff'; ctx.strokeRect(A.l, A.t, A.w, A.h);
   ctx.lineWidth = 4; ctx.strokeStyle = col;
   const c = 16, o = 6;
   for (const [x, y, sx, sy] of [[A.l - o, A.t - o, 1, 1], [A.r + o, A.t - o, -1, 1], [A.l - o, A.b + o, 1, -1], [A.r + o, A.b + o, -1, -1]]) {
@@ -1319,7 +1442,7 @@ function drawPlayer(){
   ctx.beginPath(); ctx.arc(0, 0, keys.focus ? P.r : 2.2, 0, TAU); ctx.fillStyle = '#fff'; ctx.fill();
   if (keys.focus) { ctx.lineWidth = 1.5; ctx.strokeStyle = C.deep; ctx.stroke(); }
   ctx.restore();
-  if (P.shieldT > 0 && !(P.shieldT < 0.6 && Math.floor(P.shieldT * 14) % 2)) {   // escudo hexagonal de la invencibilidad
+  if (P.shieldT > 0 && !(P.shieldT < 3 && Math.floor(P.shieldT * (P.shieldT < 1 ? 14 : 6)) % 2)) {   // escudo hexagonal de la invencibilidad
     ctx.save(); ctx.translate(P.x, P.y); ctx.rotate(G.clock * 1.5); ctx.beginPath();
     for (let i = 0; i < 6; i++) { const a = i * Math.PI / 3; ctx.lineTo(Math.cos(a) * 19, Math.sin(a) * 19); }
     ctx.closePath(); ctx.fillStyle = rgba(C.spark, 0.13); ctx.fill(); ctx.strokeStyle = C.spark; ctx.lineWidth = 2.5; ctx.stroke();
@@ -1396,33 +1519,42 @@ function drawIconBtn(r, icon){
 }
 
 // ================= Menú inicial =================
-const MENU_Y = 426, MENU_GAP = 52;
+const MENU_CY = 490, MENU_GAP = 46;
 const MENUS = {
-  main: [{ label: 'TECLADO · WASD', act: () => startRun(false, 'keys') },
-         { label: 'RATÓN', act: () => startRun(false, 'mouse') },
+  main: [{ label: 'TECLADO · WASD', act: () => startRun(false, 'keys', false) },
+         { label: 'RATÓN', act: () => startRun(false, 'mouse', false) },
+         { label: 'HARDCORE', act: () => setMenu('hard', 0) },
          { label: 'PANEL ADMIN', act: () => setMenu('admin', 0) }],
-  admin: [{ label: 'ADMIN · TECLADO', act: () => startRun(true, 'keys') },
-          { label: 'ADMIN · RATÓN', act: () => startRun(true, 'mouse') },
-          { label: 'VOLVER', act: () => setMenu('main', 2) }]
+  hard: [{ label: 'HARDCORE · TECLADO', act: () => startRun(false, 'keys', true) },
+         { label: 'HARDCORE · RATÓN', act: () => startRun(false, 'mouse', true) },
+         { label: 'VOLVER', act: () => setMenu('main', 2) }],
+  admin: [{ label: 'ADMIN · TECLADO', act: () => startRun(true, 'keys', false) },
+          { label: 'ADMIN · RATÓN', act: () => startRun(true, 'mouse', false) },
+          { label: 'VOLVER', act: () => setMenu('main', 3) }]
 };
-function setMenu(m, sel){
-  G.menu = m; G.sel = sel; AudioSys.play('select');
-  Boss.say(m === 'admin' ? 'Vaya... ¿trucos? Elige cómo moverte.' : '¿Juegas? Elige cómo moverte.', 1e9);
+const MENU_LINES = { main: '¿Juegas? Elige cómo moverte.', hard: 'Sin piedad, entonces. Elige cómo moverte.', admin: 'Vaya... ¿trucos? Elige cómo moverte.' };
+const hardLook = () => G.state === 'title' ? G.menu === 'hard' : G.hard;
+const menuY = i => MENU_CY + (i - (MENUS[G.menu].length - 1) / 2) * MENU_GAP;
+function setMenu(m, sel, line = MENU_LINES[m]){
+  G.menu = m; G.sel = sel;
+  arena.set(360, MENUS[m].length * MENU_GAP + 14, 300, MENU_CY);
+  if (line) Boss.say(line, 1e9);
+  AudioSys.play('select');
 }
 function menuHit(p){
   if (G.state !== 'title') return -1;
-  for (let i = 0; i < MENUS[G.menu].length; i++) if (inRect(p, { x: 150, y: MENU_Y + i * MENU_GAP - 20, w: 300, h: 40 }, 0)) return i;
+  for (let i = 0; i < MENUS[G.menu].length; i++) if (inRect(p, { x: 150, y: menuY(i) - 19, w: 300, h: 38 }, 0)) return i;
   return -1;
 }
 function toMenu(){
   if (AudioSys.ac && AudioSys.ac.state === 'suspended') AudioSys.ac.resume().catch(() => {});
   ADM.open = false; adEl.hidden = true;
-  clearField(); Music.stop();
-  Object.assign(G, { state: 'title', paused: false, menu: 'main', sel: 0 });
+  clearField(); Music.stop(); AudioSys.musDuck(false);
+  Object.assign(G, { state: 'title', paused: false });
   Object.assign(D, { picks: [], runs: [], phase: 'idle' });
   Object.assign(P, { alive: true, mode: 'free', inv: 0, shieldT: 0 });
-  arena.set(360, 176, 300, 478); bJump.style.visibility = 'hidden';
-  Boss.say('¿Otra ronda? Elige cómo moverte.', 1e9);
+  bJump.style.visibility = 'hidden';
+  setMenu('main', 0, '¿Otra ronda? Elige cómo moverte.');
 }
 
 // ================= HUD =================
@@ -1434,9 +1566,13 @@ function drawTop(){
       txt('MODO ADMIN · sin récord', 24, 64, 12, C.violet, 'left');
       const on = [ADM.speedOn && 'VEL ' + ADM.speed, ADM.immune && 'INMUNE', ADM.orbs && 'ORBES'].filter(Boolean);
       txt(on.length ? on.join(' · ') : 'H: panel', 24, 82, 12, on.length ? C.spark : C.dim, 'left');
-    } else txt('RÉCORD ' + String(Math.max(best.score, Math.floor(G.score))).padStart(7, '0'), 24, 64, 12, C.dim, 'left');
+    } else {
+      const rb = G.hard ? bestHC : best;
+      txt((G.hard ? 'RÉCORD HC ' : 'RÉCORD ') + String(Math.max(rb.score, Math.floor(G.score))).padStart(7, '0'), 24, 64, 12, C.dim, 'left');
+      if (G.hard) pill('HARDCORE', 60, 84, C.hazard);
+    }
     txt('OLEADA', 300, 22, 12, C.dim);
-    txt(String(D.wave), 300, 54, 28, C.spark, 'center', FD);
+    txt(String(D.wave), 300, 54, 28, G.hard ? C.hazard : C.spark, 'center', FD);
   }
   drawIconBtn(UI.mute, AudioSys.muted ? 'mute' : 'sound');
   if (G.state === 'play') { drawIconBtn(UI.pause, G.paused && !ADM.open ? 'play' : 'pause'); if (G.admin) drawIconBtn(UI.admin, 'H'); }
@@ -1460,14 +1596,14 @@ function drawBottom(){
   else numText(Math.floor(P.charge) + '%', V, y2 + 13, 16, C.ink);
   txt('INVENC.', 24, y3 + 13, 14, C.dim, 'left');
   if (P.shieldT > 0) { hudBar(X, y3, P.shieldT / SHIELD_DUR, C.spark, C.spark); txt('ACTIVA ' + P.shieldT.toFixed(1) + ' s', V, y3 + 13, 13, C.spark, 'left'); }
-  else if (P.shieldCd > 0) { hudBar(X, y3, 1 - P.shieldCd / SHIELD_CD, rgba(C.spark, 0.35)); numText(Math.ceil(P.shieldCd) + ' s', V, y3 + 13, 16, C.ink); }
-  else { hudBar(X, y3, 1, rgba(C.spark, 0.8 + 0.2 * Math.sin(G.clock * 6)), C.spark); txt(isTouch ? '¡LISTA! toca INVENC.' : '¡LISTA! pulsa I', V, y3 + 13, 13, C.spark, 'left'); }
+  else if (P.shieldCd > 0) { hudBar(X, y3, 1 - P.shieldCd / shieldCdMax(), rgba(C.spark, 0.35)); numText(Math.ceil(P.shieldCd) + ' s', V, y3 + 13, 16, C.ink); }
+  else { hudBar(X, y3, 1, rgba(C.spark, 0.8 + 0.2 * Math.sin(G.clock * 6)), C.spark); txt(isTouch ? '¡LISTA! toca INVENC.' : '¡LISTA! pulsa P', V, y3 + 13, 13, C.spark, 'left'); }
   txt('TIEMPO', 436, y1 + 13, 14, C.dim, 'left'); numText(fmtTime(G.time), 576, y1 + 13, 16, C.ink, 'right');
   txt('ROCES', 436, y2 + 13, 14, C.dim, 'left'); numText(G.combo + ' x' + comboMult().toFixed(1), 576, y2 + 13, 16, G.combo >= 15 ? C.spark : C.ink, 'right');
-  txt((G.admin ? 'ADMIN · ' : 'MODO ') + (G.ctrl === 'mouse' ? 'RATÓN' : 'TECLADO'), 576, y3 + 13, 13, G.admin ? C.violet : C.dim, 'right');
+  txt((G.admin ? 'ADMIN · ' : G.hard ? 'HARDCORE · ' : 'MODO ') + (G.ctrl === 'mouse' ? 'RATÓN' : 'TECLADO'), 576, y3 + 13, 13, G.admin ? C.violet : G.hard ? C.hazard : C.dim, 'right');
   const hint = isTouch ? 'Arrastra para mover · roza balas para cargar el PULSO'
     : (G.ctrl === 'mouse' ? 'Ratón mover · clic saltar · ' : 'WASD mover · Shift precisión · ')
-      + (G.admin ? 'X pulso · I invencibilidad · H panel' : 'X pulso · I invencibilidad · P pausa');
+      + (G.admin ? 'X pulso · P invencibilidad · H panel' : 'X pulso · P invencibilidad · Esc pausa');
   txt(hint, 300, 784, 13, '#6f6596', 'center', FB, 500);
 }
 function drawBanner(){
@@ -1495,27 +1631,30 @@ function drawInfinity(cx, cy, s, t){
   const [x, y] = pt(t * 1.8); orb(C.white, 4, x, y);
 }
 function drawTitle(){
-  const y = 292;
-  txt('ESQUIVA', 297, y + 3, 60, rgba(C.neon, 0.55), 'center', FD);
+  const y = 292, hl = G.menu === 'hard';
+  txt('ESQUIVA', 297, y + 3, 60, rgba(hl ? C.ember : C.neon, 0.55), 'center', FD);
   txt('ESQUIVA', 303, y - 3, 60, rgba(C.hazard, 0.5), 'center', FD);
   txt('ESQUIVA', 300, y, 60, C.ink, 'center', FD);
   drawInfinity(300, 328, 44, G.clock);
-  txt(G.menu === 'admin' ? 'Modo admin: ¿con qué te mueves?' : 'Elige cómo quieres moverte.', 300, 374, 15, C.dim, 'center', FB, 500);
+  txt({ main: 'Elige cómo quieres jugar.', hard: 'Hardcore: ¿con qué te mueves?', admin: 'Modo admin: ¿con qué te mueves?' }[G.menu], 300, 374, 15, C.dim, 'center', FB, 500);
   MENUS[G.menu].forEach((it, i) => {
-    const cy = MENU_Y + i * MENU_GAP, sel = i === G.sel;
-    if (sel) { ctx.fillStyle = rgba(C.neon, 0.1); roundRect(150, cy - 20, 300, 40, 10); ctx.fill(); ctx.strokeStyle = rgba(C.neon, 0.8); ctx.lineWidth = 2; ctx.stroke(); }
-    txt(it.label, 312, cy + 7, 18, sel ? C.ink : rgba(C.ink, 0.55), 'center', FD);
+    const cy = menuY(i), sel = i === G.sel, red = it.label.startsWith('HARDCORE'), col = red ? C.hazard : C.neon;
+    if (sel) { ctx.fillStyle = rgba(col, 0.12); roundRect(150, cy - 19, 300, 38, 10); ctx.fill(); ctx.strokeStyle = rgba(col, 0.85); ctx.lineWidth = 2; ctx.stroke(); }
+    txt(it.label, 312, cy + 7, 18, sel ? (red ? '#ffd0de' : C.ink) : rgba(red ? C.hazard : C.ink, 0.6), 'center', FD);
   });
   const rows = G.menu === 'admin'
     ? [['H', 'abrir o cerrar el panel en partida'], ['1', 'velocidad extra (tú eliges cuánta)'], ['2', 'inmunidad infinita'], ['3', 'orbes que destruyen balas'], ['Ojo', 'en modo admin no se guarda el récord']]
-    : isTouch
-      ? [['Arrastra', 'mover la chispa'], ['Roza balas', 'llena la CARGA del PULSO'], ['INVENC.', 'invencible 3 s · recarga 30 s'], ['SALTO', 'saltar en modo gravedad']]
-      : [['WASD / ratón', 'mover (según el modo)'], ['Roza balas', 'suma puntos y llena la CARGA'], ['X', 'pulso que borra balas pequeñas'], ['I', 'invencibilidad 3 s · recarga 30 s'], ['Espacio / clic', 'saltar en modo gravedad']];
-  rows.forEach(([k, v], i) => { const yy = 604 + i * 23; txt(k, 288, yy, 15, C.spark, 'right'); txt(v, 300, yy, 15, C.ink, 'left', FB, 500); });
+    : hl
+      ? [['Vida', '10 PV y los golpes duelen un 50 % más'], ['Ataques', 'más rápidos, más densos y avisan menos'], ['Combos', 'dos ataques a la vez cada dos oleadas'], ['Sin curas', 'invencibilidad 15 s cada 60 s'], ['Premio', 'puntos x2 y récord propio']]
+      : isTouch
+        ? [['Arrastra', 'mover la chispa'], ['Roza balas', 'llena la CARGA del PULSO'], ['INVENC.', 'invencible 15 s · recarga 30 s'], ['SALTO', 'saltar en modo gravedad']]
+        : [['WASD / ratón', 'mover (según el modo)'], ['Roza balas', 'suma puntos y llena la CARGA'], ['X', 'pulso que borra balas pequeñas'], ['P', 'invencibilidad 15 s · recarga 30 s'], ['Espacio / clic', 'saltar en modo gravedad']];
+  rows.forEach(([k, v], i) => { const yy = 614 + i * 23; txt(k, 288, yy, 15, hl ? C.hazard : C.spark, 'right'); txt(v, 300, yy, 15, C.ink, 'left', FB, 500); });
   ctx.globalAlpha = 0.7 + 0.3 * Math.sin(G.clock * 4);
-  txt(isTouch ? 'TOCA UN MODO PARA EMPEZAR' : 'ELIGE CON ↑ ↓ Y PULSA ENTER', 300, 740, 18, C.spark, 'center', FD);
+  txt(isTouch ? 'TOCA UN MODO PARA EMPEZAR' : 'ELIGE CON ↑ ↓ Y PULSA ENTER', 300, 746, 18, C.spark, 'center', FD);
   ctx.globalAlpha = 1;
-  if (best.score > 0) txt('Récord: ' + best.score + ' pts · oleada ' + best.wave + ' · ' + fmtTime(best.time), 300, 770, 13, C.dim);
+  const recs = [best.score > 0 && 'Récord: ' + best.score + ' pts · oleada ' + best.wave, bestHC.score > 0 && 'Hardcore: ' + bestHC.score + ' pts · oleada ' + bestHC.wave].filter(Boolean);
+  if (recs.length) txt(recs.join('   ·   '), 300, 776, 13, C.dim);
 }
 function btn(r, label, hot){
   ctx.fillStyle = hot ? rgba(C.spark, 0.14) : '#1a1033'; roundRect(r.x, r.y, r.w, r.h, 10); ctx.fill();
@@ -1525,11 +1664,12 @@ function btn(r, label, hot){
 function drawOver(){
   ctx.fillStyle = 'rgba(8,4,18,0.82)'; ctx.fillRect(0, 0, W, H);
   txt('DERRIBADO', 300, 250, 50, C.hazard, 'center', FD);
+  if (G.hard) pill('HARDCORE', 300, 280, C.hazard);
   [['OLEADA', String(D.wave)], ['TIEMPO', fmtTime(G.time)], ['ROCES', String(G.grazes)], ['PUNTOS', String(Math.floor(G.score))]]
     .forEach(([k, v], i) => { const y = 318 + i * 38; txt(k, 200, y, 15, C.dim, 'left'); numText(v, 400, y, 22, C.ink, 'right'); });
   if (G.admin) txt('Modo admin: el récord no se guarda', 300, 492, 15, C.violet);
-  else if (G.newBest) txt('¡NUEVO RÉCORD!', 300, 492, 24, C.spark, 'center', FD);
-  else txt('Récord: ' + best.score + ' pts · oleada ' + best.wave, 300, 492, 15, C.dim);
+  else if (G.newBest) txt(G.hard ? '¡NUEVO RÉCORD HARDCORE!' : '¡NUEVO RÉCORD!', 300, 492, G.hard ? 20 : 24, C.spark, 'center', FD);
+  else { const rb = G.hard ? bestHC : best; txt((G.hard ? 'Récord hardcore: ' : 'Récord: ') + rb.score + ' pts · oleada ' + rb.wave, 300, 492, 15, C.dim); }
   txt('EL ARQUITECTO', 300, 540, 11, C.violet);
   ctx.font = '500 17px ' + FB;
   wrap('«' + G.overLine + '»', 440).forEach((l, i) => txt(l, 300, 566 + i * 22, 17, C.ink, 'center', FB, 500));
@@ -1542,7 +1682,7 @@ function drawPause(){
   ctx.fillStyle = 'rgba(8,4,18,0.7)'; ctx.fillRect(0, 0, W, H);
   if (ADM.open) return;
   txt('PAUSA', 300, 400, 48, C.ink, 'center', FD);
-  txt(isTouch ? 'Toca SEGUIR para continuar' : 'P / Esc: seguir · Q: menú · M: sonido', 300, 440, 15, C.dim);
+  txt(isTouch ? 'Toca SEGUIR para continuar' : 'Esc: seguir · Q: menú · M: sonido', 300, 440, 15, C.dim);
   btn(BTN.resume, 'SEGUIR', true); btn(BTN.quit, 'MENÚ', false);
 }
 function render(){
@@ -1609,7 +1749,7 @@ function handleInput(){
     if (hit.down) { G.sel = (G.sel + 1) % n; AudioSys.play('blip'); }
     ['ad1', 'ad2', 'ad3'].forEach((k, i) => { if (hit[k] && i < n) { G.sel = i; hit.confirm = true; } });
     if (hit.confirm) MENUS[G.menu][G.sel].act();
-    else if (hit.pause && G.menu === 'admin') setMenu('main', 2);
+    else if (hit.pause && G.menu !== 'main') setMenu('main', G.menu === 'hard' ? 2 : 3);
   } else if (G.state === 'over') {
     if (G.overT > 0.8) { if (hit.confirm) startRun(); else if (hit.menu || hit.pause || hit.quit) toMenu(); }
   } else if (G.state === 'play') {
@@ -1629,7 +1769,7 @@ function step(dt){
   updateBullets(dt);
   if (G.state === 'play') {
     updateShots(dt); collide(dt); updatePickups(dt);
-    if (D.phase === 'attack') { G.time += dt; G.score += 10 * comboMult() * dt; }
+    if (D.phase === 'attack') { G.time += dt; G.score += 10 * comboMult() * scoreMul() * dt; }
   }
   updatePulses(dt); updateFx(dt); Boss.update(dt);
   G.shake = Math.max(0, G.shake - dt * 30); G.flash = Math.max(0, G.flash - dt * 1.5);
@@ -1640,7 +1780,7 @@ function idle(dt){
   G.shake = Math.max(0, G.shake - dt * 30); G.flash = Math.max(0, G.flash - dt * 1.5);
   if (G.state === 'title') {   // la chispa hace de cursor del menú
     const k = 1 - Math.exp(-dt * 14);
-    P.x = lerp(P.x, 172, k); P.y = lerp(P.y, MENU_Y + G.sel * MENU_GAP, k); P.spin += dt * 2;
+    P.x = lerp(P.x, 172, k); P.y = lerp(P.y, menuY(G.sel), k); P.spin += dt * 2;
   }
 }
 let lastT = 0;
@@ -1668,7 +1808,7 @@ function frame(now){
 }
 
 // Ganchos para pruebas automáticas (no afectan al juego)
-window.__esq = { G, D, P, A, ADM, bullets, shots, PATTERNS, startRun, step, render, toMenu, adminOpen, adminToggle,
+window.__esq = { G, D, P, A, ADM, Music, AudioSys, bullets, shots, PATTERNS, startRun, step, render, toMenu, adminOpen, adminToggle,
   play(id, wave = 6){
     if (G.state !== 'play') startRun();
     clearField();
@@ -1682,7 +1822,7 @@ window.__esq = { G, D, P, A, ADM, bullets, shots, PATTERNS, startRun, step, rend
 function boot(data){
   if (data && data.best && data.best.score > best.score) best = data.best;
   resize(); adminSync();
-  arena.set(360, 176, 300, 478); arena.snap(); P.x = 172; P.y = MENU_Y;
+  arena.set(360, MENUS.main.length * MENU_GAP + 14, 300, MENU_CY); arena.snap(); P.x = 172; P.y = menuY(0);
   Boss.say('¿Juegas? Elige cómo moverte.', 1e9);
   if (document.fonts && document.fonts.load) { document.fonts.load('20px Bungee').catch(() => {}); document.fonts.load('700 14px "Chakra Petch"').catch(() => {}); }
   requestAnimationFrame(t => { lastT = t; frame(t); });

@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Clawd Quest — Un mundo de código</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #07050f; overflow: hidden; touch-action: none; }
+  body { display: flex; align-items: center; justify-content: center; }
+  #screen { display: block; background: #000; image-rendering: pixelated; image-rendering: crisp-edges;
+    box-shadow: 0 0 0 2px #1c1430, 0 0 48px rgba(218, 119, 86, .22); }
+  #touch { display: none; position: fixed; inset: 0; pointer-events: none; user-select: none; -webkit-user-select: none; }
+  #touch .b { position: absolute; pointer-events: auto; width: 62px; height: 62px; border-radius: 16px;
+    background: rgba(255, 255, 255, .10); border: 2px solid rgba(255, 255, 255, .32); color: rgba(255, 255, 255, .85);
+    font: bold 20px/1 monospace; display: flex; align-items: center; justify-content: center; touch-action: none; }
+  #touch .b.on { background: rgba(255, 210, 120, .38); border-color: #ffe14a; }
+  #touch .r { border-radius: 50%; }
+  #touch .s { width: 46px; height: 34px; font-size: 14px; border-radius: 10px; }
+</style>
+</head>
+<body>
+<canvas id="screen" width="320" height="224" aria-label="Clawd Quest"></canvas>
+<div id="touch">
+  <div class="b" data-k="l" style="left:14px;bottom:76px">◀</div>
+  <div class="b" data-k="r" style="left:142px;bottom:76px">▶</div>
+  <div class="b" data-k="u" style="left:78px;bottom:142px">▲</div>
+  <div class="b" data-k="d" style="left:78px;bottom:10px">▼</div>
+  <div class="b r" data-k="b,back" style="right:100px;bottom:34px">B</div>
+  <div class="b r" data-k="j,ok" style="right:18px;bottom:82px">A</div>
+  <div class="b s" data-k="p" style="right:18px;top:14px">II</div>
+</div>
+<script id="core">
+/*CORE*/
+</script>
+<script>
+/*GAME*/
+</script>
+</body>
+</html>
